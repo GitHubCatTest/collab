@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "node --test --import tsx tests/**/*.test.ts",
+    "test": "node --test --import tsx $(find tests -type f -name '*.test.ts' | sort)",
     "lint": "tsc -p tsconfig.json --noEmit",
     "eval:smoke": "tsx src/index.ts eval run --suite smoke --json",
     "eval:regression": "tsx src/index.ts eval run --suite regression --json"
