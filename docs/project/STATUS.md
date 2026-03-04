@@ -14,6 +14,14 @@
 - OSS docs foundation: contributing, security policy, code of conduct, license
 - Provider policy documentation and subscription-safe boundaries
 - Adapter protocol documentation and runnable example adapter script
+- CLI/config hardening for production flags (`--mode`, `--verify`, `--max-revisions`, `--yes`)
+- Parser validation and tests for new run-flag behaviors
+- Stateful run pipeline with revision loops and explicit apply confirmation gating
+- Verification runner (`none|basic|strict`) with command-level result capture
+- Patch synthesis pipeline with model-provided unified diff extraction + fallback patch generation
+- Safe git apply utility with dry-run check support
+- Provider error taxonomy + retry/backoff handling for transient failures
+- Interactive follow-up mode via `collab chat`
 
 ## In Progress
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { listAdaptersCommand } from "./commands/adapters.js";
+import { chatCommand } from "./commands/chat.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { replayCommand } from "./commands/replay.js";
 import { runCommand } from "./commands/run.js";
@@ -22,6 +23,11 @@ async function main(): Promise<void> {
 
   if (command === "doctor") {
     const code = await doctorCommand();
+    process.exit(code);
+  }
+
+  if (command === "chat") {
+    const code = await chatCommand(args.slice(1));
     process.exit(code);
   }
 

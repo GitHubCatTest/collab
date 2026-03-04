@@ -4,6 +4,11 @@ import type {
   ProviderConfig,
   ProviderName
 } from "../types/index.js";
+import {
+  ProviderRequestError,
+  classifyHttpError,
+  classifyUnknownError
+} from "./errors.js";
 
 interface JsonRequestArgs {
   url: string;
@@ -11,6 +16,7 @@ interface JsonRequestArgs {
   headers?: Record<string, string>;
   body?: unknown;
   timeoutMs: number;
+  maxRetries?: number;
 }
 
 export abstract class BaseProvider {
@@ -19,20 +25,63 @@ export abstract class BaseProvider {
   protected getApiKey(config: ProviderConfig): string {
     const key = process.env[config.apiKeyEnv];
     if (!key) {
-      throw new Error(
-        `${this.name} provider missing API key in env var ${config.apiKeyEnv}`
-      );
+      throw new ProviderRequestError({
+        message: `${this.name} provider missing API key in env var ${config.apiKeyEnv}`,
+        code: "auth",
+        retryable: false
+      });
     }
 
     return key;
   }
 
   protected async jsonRequest<T>(args: JsonRequestArgs): Promise<T> {
+    const maxRetries = args.maxRetries ?? 2;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const response = await this.fetchWithTimeout(args);
+
+        if (!response.ok) {
+          const body = await response.text();
+          const classified = classifyHttpError(response.status);
+
+          throw new ProviderRequestError({
+            message: `${this.name} request failed: ${response.status} ${body}`,
+            code: classified.code,
+            retryable: classified.retryable,
+            status: response.status,
+            responseBody: body
+          });
+        }
+
+        return (await response.json()) as T;
+      } catch (error) {
+        const typed = normalizeProviderError(error);
+        const isFinalAttempt = attempt >= maxRetries;
+        if (!typed.retryable || isFinalAttempt) {
+          throw typed;
+        }
+
+        const delayMs = 250 * 2 ** attempt + Math.floor(Math.random() * 120);
+        // Retry transient provider/network issues with capped backoff.
+        await sleep(Math.min(delayMs, 2000));
+      }
+    }
+
+    throw new ProviderRequestError({
+      message: `${this.name} request failed after retries`,
+      code: "unknown",
+      retryable: false
+    });
+  }
+
+  private async fetchWithTimeout(args: JsonRequestArgs): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), args.timeoutMs);
 
     try {
-      const response = await fetch(args.url, {
+      return await fetch(args.url, {
         method: args.method ?? "POST",
         headers: {
           "content-type": "application/json",
@@ -41,13 +90,6 @@ export abstract class BaseProvider {
         body: args.body === undefined ? undefined : JSON.stringify(args.body),
         signal: controller.signal
       });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`${this.name} request failed: ${response.status} ${body}`);
-      }
-
-      return (await response.json()) as T;
     } finally {
       clearTimeout(timer);
     }
@@ -56,7 +98,7 @@ export abstract class BaseProvider {
   protected buildPrompts(input: GenerateInput): { system: string; user: string } {
     const system = [
       "You are participating in a multi-model engineering team.",
-      "Return concise, implementation-focused output.",
+      "Focus on planning quality and repository-grounded implementation details.",
       "Do not expose private chain-of-thought."
     ].join(" ");
 
@@ -71,7 +113,8 @@ export abstract class BaseProvider {
       "DIFF_PLAN:",
       "RISKS:",
       "TESTS:",
-      "EVIDENCE:"
+      "EVIDENCE:",
+      "PATCH_DIFF: (optional unified diff)"
     ].join("\n\n");
 
     return { system, user };
@@ -95,6 +138,25 @@ export abstract class BaseProvider {
       estimatedCostUsd
     };
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function normalizeProviderError(error: unknown): ProviderRequestError {
+  if (error instanceof ProviderRequestError) {
+    return error;
+  }
+
+  const classified = classifyUnknownError(error);
+  return new ProviderRequestError({
+    message: classified.message,
+    code: classified.code,
+    retryable: classified.retryable
+  });
 }
 
 export function estimateCostUsd(input: GenerateInput, outputText: string): number {

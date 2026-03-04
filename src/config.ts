@@ -46,6 +46,15 @@ const DEFAULT_CONFIG: CollabConfig = {
     budgetUsd: 5,
     timeoutSec: 600
   },
+  execution: {
+    mode: "patch",
+    maxRevisionLoops: 1,
+    requireApplyConfirmation: true
+  },
+  verification: {
+    profile: "basic",
+    commands: []
+  },
   telemetry: {
     enabled: false
   },
@@ -120,6 +129,16 @@ function mergeConfig(
       ...(user.limits ?? {}),
       ...(project.limits ?? {})
     },
+    execution: {
+      ...defaults.execution,
+      ...(user.execution ?? {}),
+      ...(project.execution ?? {})
+    },
+    verification: {
+      ...defaults.verification,
+      ...(user.verification ?? {}),
+      ...(project.verification ?? {})
+    },
     telemetry: {
       ...defaults.telemetry,
       ...(user.telemetry ?? {}),
@@ -163,6 +182,20 @@ function applyCliOverrides(config: CollabConfig, cli: RunCliOptions): CollabConf
       ...(cli.budgetUsd ? { budgetUsd: cli.budgetUsd } : {}),
       ...(cli.timeoutSec ? { timeoutSec: cli.timeoutSec } : {})
     },
+    execution: {
+      ...config.execution,
+      ...(cli.mode ? { mode: cli.mode } : {}),
+      ...(cli.maxRevisionLoops !== undefined
+        ? { maxRevisionLoops: cli.maxRevisionLoops }
+        : {}),
+      ...(cli.autoYes !== undefined
+        ? { requireApplyConfirmation: !cli.autoYes }
+        : {})
+    },
+    verification: {
+      ...config.verification,
+      ...(cli.verify ? { profile: cli.verify } : {})
+    },
     outputDir: cli.outDir ?? config.outputDir
   };
 }
@@ -178,6 +211,18 @@ function validateConfig(config: CollabConfig): void {
 
   if (config.limits.timeoutSec <= 0) {
     throw new Error("limits.timeoutSec must be > 0");
+  }
+
+  if (config.execution.maxRevisionLoops < 0) {
+    throw new Error("execution.maxRevisionLoops must be >= 0");
+  }
+
+  if (!["plan", "patch", "apply"].includes(config.execution.mode)) {
+    throw new Error("execution.mode must be one of: plan, patch, apply");
+  }
+
+  if (!["none", "basic", "strict"].includes(config.verification.profile)) {
+    throw new Error("verification.profile must be one of: none, basic, strict");
   }
 
   for (const role of AGENT_ROLES) {

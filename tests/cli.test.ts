@@ -12,6 +12,13 @@ test("parseRunArgs parses options and task", () => {
     "3.5",
     "--timeout-sec",
     "200",
+    "--mode",
+    "patch",
+    "--verify",
+    "strict",
+    "--max-revisions",
+    "2",
+    "--yes",
     "--out",
     "./out",
     "--json",
@@ -25,10 +32,25 @@ test("parseRunArgs parses options and task", () => {
   assert.equal(parsed.options.maxRounds, 4);
   assert.equal(parsed.options.budgetUsd, 3.5);
   assert.equal(parsed.options.timeoutSec, 200);
+  assert.equal(parsed.options.mode, "patch");
+  assert.equal(parsed.options.verify, "strict");
+  assert.equal(parsed.options.maxRevisionLoops, 2);
+  assert.equal(parsed.options.autoYes, true);
   assert.equal(parsed.options.outDir, "./out");
   assert.equal(parsed.options.json, true);
 });
 
 test("parseRunArgs rejects unknown options", () => {
   assert.throws(() => parseRunArgs(["--bad-flag", "task"]));
+});
+
+test("parseRunArgs rejects invalid mode or verify values", () => {
+  assert.throws(() => parseRunArgs(["--mode", "auto", "task"]));
+  assert.throws(() => parseRunArgs(["--verify", "full", "task"]));
+});
+
+test("parseRunArgs rejects missing option values and invalid numbers", () => {
+  assert.throws(() => parseRunArgs(["--repo"]));
+  assert.throws(() => parseRunArgs(["--max-rounds", "0", "task"]));
+  assert.throws(() => parseRunArgs(["--max-revisions", "-1", "task"]));
 });

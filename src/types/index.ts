@@ -1,4 +1,15 @@
 export type AgentRole = "architect" | "implementer" | "reviewer" | "arbiter";
+export type ExecutionMode = "plan" | "patch" | "apply";
+export type VerificationProfile = "none" | "basic" | "strict";
+export type SessionState =
+  | "init"
+  | "planning"
+  | "patching"
+  | "verifying"
+  | "ready_to_apply"
+  | "applying"
+  | "completed"
+  | "failed";
 
 export const AGENT_ROLES: AgentRole[] = [
   "architect",
@@ -34,6 +45,17 @@ export interface LimitsConfig {
   timeoutSec: number;
 }
 
+export interface ExecutionConfig {
+  mode: ExecutionMode;
+  maxRevisionLoops: number;
+  requireApplyConfirmation: boolean;
+}
+
+export interface VerificationConfig {
+  profile: VerificationProfile;
+  commands: string[];
+}
+
 export interface TelemetryConfig {
   enabled: boolean;
   endpoint?: string;
@@ -44,6 +66,8 @@ export interface CollabConfig {
   providers: Partial<Record<ProviderName, ProviderConfig>>;
   subscriptionAdapters: SubscriptionAdapterConfig[];
   limits: LimitsConfig;
+  execution: ExecutionConfig;
+  verification: VerificationConfig;
   telemetry: TelemetryConfig;
   outputDir?: string;
 }
@@ -53,6 +77,10 @@ export interface RunCliOptions {
   maxRounds?: number;
   budgetUsd?: number;
   timeoutSec?: number;
+  mode?: ExecutionMode;
+  verify?: VerificationProfile;
+  maxRevisionLoops?: number;
+  autoYes?: boolean;
   outDir?: string;
   json?: boolean;
 }
@@ -113,7 +141,9 @@ export interface BusEvent {
     | "proposal"
     | "arbiter_decision"
     | "system"
-    | "warning";
+    | "warning"
+    | "state_transition"
+    | "verification";
   content: string;
   refs?: string[];
   costUsd?: number;
@@ -130,10 +160,16 @@ export interface SessionSummary {
   sessionId: string;
   task: string;
   roundsCompleted: number;
+  sessionState: SessionState;
+  mode: ExecutionMode;
+  verificationProfile: VerificationProfile;
+  verificationPassed: boolean;
+  revisionAttempts: number;
   totalCostUsd: number;
   totalLatencyMs: number;
   providersUsed: string[];
   winnerProposalId: string;
+  patchSource?: CandidatePatch["source"];
   outputDir: string;
 }
 
@@ -144,4 +180,26 @@ export interface OrchestrationResult {
   arbiterDecision: ArbiterDecision;
   events: BusEvent[];
   summary: SessionSummary;
+}
+
+export interface CandidatePatch {
+  patch: string;
+  source: "model" | "fallback";
+  targetFiles: string[];
+}
+
+export interface VerificationCommandResult {
+  command: string;
+  success: boolean;
+  code: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
+export interface VerificationResult {
+  profile: VerificationProfile;
+  passed: boolean;
+  commandResults: VerificationCommandResult[];
+  summary: string;
 }

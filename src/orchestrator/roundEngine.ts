@@ -4,13 +4,13 @@ import { runSubprocessAdapter } from "../adapters/subprocessAdapter.js";
 import { decideProposal } from "../arbiter/scorer.js";
 import { EventBus, systemEvent } from "../bus/eventBus.js";
 import { ProviderFactory } from "../providers/factory.js";
+import { ProviderRequestError } from "../providers/errors.js";
 import type {
   AgentRole,
   ArbiterDecision,
   CollabConfig,
   OrchestrationResult,
   Proposal,
-  ProposalScores,
   ProviderName
 } from "../types/index.js";
 import { collectRepoContext, formatRepoContext } from "./context.js";
@@ -131,7 +131,7 @@ export async function runOrchestration(
           ].join("\n")
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = formatProviderError(error);
         bus.emit({
           round,
           role,
@@ -191,6 +191,11 @@ export async function runOrchestration(
     sessionId,
     task: args.task,
     roundsCompleted,
+    sessionState: "planning" as const,
+    mode: args.config.execution.mode,
+    verificationProfile: args.config.verification.profile,
+    verificationPassed: false,
+    revisionAttempts: 0,
     totalCostUsd: Number(totalCostUsd.toFixed(6)),
     totalLatencyMs,
     providersUsed: [...providersUsed],
@@ -315,4 +320,12 @@ function shortHash(text: string): string {
   }
 
   return hash.toString(16).slice(0, 8);
+}
+
+function formatProviderError(error: unknown): string {
+  if (error instanceof ProviderRequestError) {
+    return `[${error.code}] ${error.message}`;
+  }
+
+  return error instanceof Error ? error.message : String(error);
 }

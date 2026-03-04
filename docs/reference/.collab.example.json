@@ -24,6 +24,15 @@
     "budgetUsd": 5,
     "timeoutSec": 600
   },
+  "execution": {
+    "mode": "patch",
+    "maxRevisionLoops": 1,
+    "requireApplyConfirmation": true
+  },
+  "verification": {
+    "profile": "basic",
+    "commands": []
+  },
   "telemetry": {
     "enabled": false
   }
