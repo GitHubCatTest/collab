@@ -2,6 +2,7 @@
 import { listAdaptersCommand } from "./commands/adapters.js";
 import { chatCommand } from "./commands/chat.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { evalCommand } from "./commands/eval.js";
 import { replayCommand } from "./commands/replay.js";
 import { runCommand } from "./commands/run.js";
 import { parseRunArgs, printUsage } from "./utils/cli.js";
@@ -28,6 +29,11 @@ async function main(): Promise<void> {
 
   if (command === "chat") {
     const code = await chatCommand(args.slice(1));
+    process.exit(code);
+  }
+
+  if (command === "eval") {
+    const code = await evalCommand(args.slice(1));
     process.exit(code);
   }
 

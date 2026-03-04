@@ -76,22 +76,33 @@ function extractTargetFiles(patch: string): string[] {
 }
 
 function renderFallbackPatch(proposal: Proposal): string {
+  const summaryLines = normalizeTextLines(proposal.summary);
+  const diffPlanLines = normalizeTextLines(proposal.diffPlan);
+  const riskLines =
+    proposal.risks.length > 0
+      ? proposal.risks.flatMap((risk) => normalizeTextLines(risk))
+      : ["None"];
+  const testLines =
+    proposal.tests.length > 0
+      ? proposal.tests.flatMap((item) => normalizeTextLines(item))
+      : ["None"];
+
   const content = [
     "# Proposed Changes",
     "",
     `Proposal ID: ${proposal.id}`,
     "",
     "## Summary",
-    proposal.summary,
+    ...summaryLines,
     "",
     "## Diff Plan",
-    proposal.diffPlan,
+    ...diffPlanLines,
     "",
     "## Risks",
-    ...(proposal.risks.length > 0 ? proposal.risks : ["None"]),
+    ...riskLines,
     "",
     "## Tests",
-    ...(proposal.tests.length > 0 ? proposal.tests : ["None"])
+    ...testLines
   ];
 
   const patchLines = [
@@ -100,9 +111,16 @@ function renderFallbackPatch(proposal: Proposal): string {
     "index 0000000..1111111",
     "--- /dev/null",
     `+++ b/${FALLBACK_FILE}`,
-    `@@ -0,0 +${content.length},${content.length} @@`,
+    `@@ -0,0 +1,${content.length} @@`,
     ...content.map((line) => `+${line}`)
   ];
 
   return `${patchLines.join("\n")}\n`;
+}
+
+function normalizeTextLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
 }

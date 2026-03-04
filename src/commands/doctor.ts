@@ -24,10 +24,12 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
 
   console.log("Providers:");
   const providerFactory = new ProviderFactory();
+  const missingProviders: Array<{ provider: string; env: string }> = [];
   for (const provider of providerFactory.list()) {
     const providerConfig = config.providers[provider.name];
     if (!providerConfig) {
       console.log(`- ${provider.name}: missing provider config`);
+      missingProviders.push({ provider: provider.name, env: "<unset>" });
       continue;
     }
 
@@ -38,6 +40,12 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
         providerConfig.apiKeyEnv
       }=${redactEnvValue(value)})`
     );
+    if (!configured) {
+      missingProviders.push({
+        provider: provider.name,
+        env: providerConfig.apiKeyEnv
+      });
+    }
   }
 
   console.log("");
@@ -54,6 +62,7 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
   console.log("Subscription adapters:");
   const registry = new AdapterRegistry(config);
   const adapters = await registry.diagnostics();
+  const missingAdapters: string[] = [];
   if (adapters.length === 0) {
     console.log("- none configured");
   } else {
@@ -63,6 +72,9 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
           adapter.available ? "available" : "not-found"
         }`
       );
+      if (!adapter.available) {
+        missingAdapters.push(adapter.name);
+      }
     }
   }
 
@@ -73,5 +85,49 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
     console.log(`- endpoint: ${config.telemetry.endpoint}`);
   }
 
+  printRemediationTips({
+    missingProviders,
+    missingAdapters
+  });
+
   return 0;
+}
+
+function printRemediationTips(args: {
+  missingProviders: Array<{ provider: string; env: string }>;
+  missingAdapters: string[];
+}): void {
+  const hasIssues =
+    args.missingProviders.length > 0 || args.missingAdapters.length > 0;
+  console.log("");
+  console.log("Remediation Tips:");
+
+  if (!hasIssues) {
+    console.log("- Environment looks ready. Try: collab run \"plan the next refactor\" --mode plan");
+    return;
+  }
+
+  if (args.missingProviders.length > 0) {
+    console.log("- Missing provider credentials:");
+    for (const missing of args.missingProviders) {
+      if (missing.env === "<unset>") {
+        console.log(`  - ${missing.provider}: add provider config under \"providers\" in .collab.json`);
+        continue;
+      }
+      console.log(
+        `  - ${missing.provider}: export ${missing.env}=\"<your_key>\"`
+      );
+    }
+  }
+
+  if (args.missingAdapters.length > 0) {
+    console.log("- Missing adapter commands:");
+    for (const name of args.missingAdapters) {
+      console.log(
+        `  - ${name}: install/configure its CLI, then re-run \"collab adapters list\"`
+      );
+    }
+  }
+
+  console.log("- Verify setup after changes: collab doctor");
 }

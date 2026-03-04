@@ -121,6 +121,7 @@ Usage:
   collab doctor
   collab adapters list
   collab replay <session.ndjson>
+  collab eval run --suite smoke|regression [--repo <path>] [--json]
 
 Run options:
   --repo <path>         Repository path (default: current directory)

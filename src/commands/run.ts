@@ -135,22 +135,26 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
       finalAttempt.artifacts.diffPath
     );
 
-      if (confirmed) {
-        updateSessionState(finalAttempt.orchestration, "applying", "Applying patch to repository.");
-        const applyResult = await applyPatchSafely({
-          repoPath,
-          patchPath: finalAttempt.artifacts.diffPath
-        });
+    if (confirmed) {
+      updateSessionState(
+        finalAttempt.orchestration,
+        "applying",
+        "Applying patch to repository."
+      );
+      const applyResult = await applyPatchSafely({
+        repoPath,
+        patchPath: finalAttempt.artifacts.diffPath
+      });
 
-        if (!applyResult.ok) {
-          updateSessionState(
-            finalAttempt.orchestration,
-            "failed",
-            `Patch apply failed: ${applyResult.stderr || applyResult.message}`
-          );
-          finalAttempt.orchestration.summary.verificationPassed = false;
-          finalAttempt.orchestration.summary.sessionState = "failed";
-        } else {
+      if (!applyResult.ok) {
+        updateSessionState(
+          finalAttempt.orchestration,
+          "failed",
+          `Patch apply failed: ${applyResult.stderr || applyResult.message}`
+        );
+        finalAttempt.orchestration.summary.verificationPassed = false;
+        finalAttempt.orchestration.summary.sessionState = "failed";
+      } else {
         const postApplyVerification = await runVerification({
           repoPath,
           profile: config.verification.profile,
@@ -265,11 +269,12 @@ async function verifyCandidatePatch(args: {
       };
     }
 
-    return runVerification({
+    const verification = await runVerification({
       repoPath: workspace,
       profile: args.profile,
       commandsOverride: args.commandsOverride
     });
+    return verification;
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

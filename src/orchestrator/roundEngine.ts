@@ -9,6 +9,7 @@ import type {
   AgentRole,
   ArbiterDecision,
   CollabConfig,
+  GenerateResult,
   OrchestrationResult,
   Proposal,
   ProviderName
@@ -22,6 +23,19 @@ export interface RunOrchestrationArgs {
   outputDir: string;
 }
 
+interface RuntimeTotals {
+  totalCostUsd: number;
+  totalLatencyMs: number;
+  providersUsed: Set<string>;
+  budgetWarningEmitted: boolean;
+}
+
+interface RoleGenerationOutput {
+  role: Exclude<AgentRole, "arbiter">;
+  result?: GenerateResult;
+  errorMessage?: string;
+}
+
 export async function runOrchestration(
   args: RunOrchestrationArgs
 ): Promise<OrchestrationResult> {
@@ -31,12 +45,16 @@ export async function runOrchestration(
   const adapterRegistry = new AdapterRegistry(args.config);
 
   const startMs = Date.now();
-  let totalCostUsd = 0;
-  let totalLatencyMs = 0;
   let roundsCompleted = 0;
-  const providersUsed = new Set<string>();
   const allProposals: Proposal[] = [];
   let latestDecision: ArbiterDecision | null = null;
+
+  const totals: RuntimeTotals = {
+    totalCostUsd: 0,
+    totalLatencyMs: 0,
+    providersUsed: new Set<string>(),
+    budgetWarningEmitted: false
+  };
 
   const repoContext = await collectRepoContext(args.repoPath);
   const repoSummary = formatRepoContext(repoContext);
@@ -66,88 +84,93 @@ export async function runOrchestration(
     }
 
     const roundProposals: Proposal[] = [];
-    const roles: Array<Exclude<AgentRole, "arbiter">> = [
-      "architect",
+
+    const architectOutput = await generateRoleOutput({
+      role: "architect",
+      task: args.task,
+      round,
+      boardSummary,
+      config: args.config,
+      bus,
+      providerFactory,
+      adapterRegistry
+    });
+
+    processRoleOutput({
+      output: architectOutput,
+      round,
+      bus,
+      task: args.task,
+      roundProposals,
+      allProposals,
+      totals,
+      budgetUsd: args.config.limits.budgetUsd
+    });
+
+    if (totals.totalCostUsd >= args.config.limits.budgetUsd) {
+      break outer;
+    }
+
+    const peerRoles: Array<Exclude<AgentRole, "arbiter">> = [
       "implementer",
       "reviewer"
     ];
 
-    for (const role of roles) {
-      const assignment = args.config.roles[role];
-      const timeoutMs = getRoleTimeoutMs(args.config, assignment.provider);
+    if (args.config.execution.parallelPeerRoles) {
+      const peerOutputs = await Promise.all(
+        peerRoles.map((role) =>
+          generateRoleOutput({
+            role,
+            task: args.task,
+            round,
+            boardSummary,
+            config: args.config,
+            bus,
+            providerFactory,
+            adapterRegistry
+          })
+        )
+      );
 
-      try {
-        const result =
-          assignment.provider === "adapter"
-            ? await runSubprocessAdapter({
-                adapter: adapterRegistry.get(assignment.adapter ?? ""),
-                model: assignment.model,
-                input: {
-                  role,
-                  task: args.task,
-                  round,
-                  boardSummary,
-                  priorMessages: bus.list(),
-                  timeoutMs
-                }
-              })
-            : await providerFactory.get(assignment.provider).generate({
-                assignment,
-                config: getProviderConfigOrThrow(args.config, assignment.provider),
-                input: {
-                  role,
-                  task: args.task,
-                  round,
-                  boardSummary,
-                  priorMessages: bus.list(),
-                  timeoutMs
-                }
-              });
-
-        totalCostUsd += result.estimatedCostUsd;
-        totalLatencyMs += result.latencyMs;
-        providersUsed.add(result.provider);
-
-        bus.emit({
+      for (const output of peerOutputs) {
+        processRoleOutput({
+          output,
           round,
-          role,
-          type: "role_response",
-          content: result.text,
-          costUsd: result.estimatedCostUsd
-        });
-
-        const proposal = parseProposal(round, role, result.text);
-        roundProposals.push(proposal);
-        allProposals.push(proposal);
-
-        bus.emit({
-          round,
-          role,
-          type: "proposal",
-          content: [
-            `id: ${proposal.id}`,
-            `summary: ${proposal.summary}`,
-            `diffPlan: ${proposal.diffPlan}`
-          ].join("\n")
-        });
-      } catch (error) {
-        const message = formatProviderError(error);
-        bus.emit({
-          round,
-          role,
-          type: "warning",
-          content: `Role ${role} failed: ${message}`
+          bus,
+          task: args.task,
+          roundProposals,
+          allProposals,
+          totals,
+          budgetUsd: args.config.limits.budgetUsd
         });
       }
-
-      if (totalCostUsd >= args.config.limits.budgetUsd) {
-        bus.emit({
+    } else {
+      for (const role of peerRoles) {
+        const output = await generateRoleOutput({
+          role,
+          task: args.task,
           round,
-          role: "arbiter",
-          type: "warning",
-          content: `Budget limit reached at ${totalCostUsd.toFixed(4)} USD`
+          boardSummary,
+          config: args.config,
+          bus,
+          providerFactory,
+          adapterRegistry
         });
-        break;
+
+        processRoleOutput({
+          output,
+          round,
+          bus,
+          task: args.task,
+          roundProposals,
+          allProposals,
+          totals,
+          budgetUsd: args.config.limits.budgetUsd
+        });
+
+        if (totals.totalCostUsd >= args.config.limits.budgetUsd) {
+          break;
+        }
       }
     }
 
@@ -173,7 +196,7 @@ export async function runOrchestration(
     boardSummary = renderBoardSummary(args.task, repoSummary, roundProposals, decision.winnerId);
     roundsCompleted = round;
 
-    if (totalCostUsd >= args.config.limits.budgetUsd) {
+    if (totals.totalCostUsd >= args.config.limits.budgetUsd) {
       break outer;
     }
   }
@@ -185,7 +208,8 @@ export async function runOrchestration(
   }
 
   const winningId = latestDecision?.winnerId ?? allProposals[0].id;
-  const winningProposal = allProposals.find((proposal) => proposal.id === winningId) ?? allProposals[0];
+  const winningProposal =
+    allProposals.find((proposal) => proposal.id === winningId) ?? allProposals[0];
 
   const summary = {
     sessionId,
@@ -196,9 +220,9 @@ export async function runOrchestration(
     verificationProfile: args.config.verification.profile,
     verificationPassed: false,
     revisionAttempts: 0,
-    totalCostUsd: Number(totalCostUsd.toFixed(6)),
-    totalLatencyMs,
-    providersUsed: [...providersUsed],
+    totalCostUsd: Number(totals.totalCostUsd.toFixed(6)),
+    totalLatencyMs: totals.totalLatencyMs,
+    providersUsed: [...totals.providersUsed],
     winnerProposalId: winningProposal.id,
     outputDir: args.outputDir
   };
@@ -213,6 +237,131 @@ export async function runOrchestration(
     events: bus.list(),
     summary
   };
+}
+
+async function generateRoleOutput(args: {
+  role: Exclude<AgentRole, "arbiter">;
+  task: string;
+  round: number;
+  boardSummary: string;
+  config: CollabConfig;
+  bus: EventBus;
+  providerFactory: ProviderFactory;
+  adapterRegistry: AdapterRegistry;
+}): Promise<RoleGenerationOutput> {
+  const assignment = args.config.roles[args.role];
+  const timeoutMs = getRoleTimeoutMs(args.config, assignment.provider);
+
+  try {
+    const result =
+      assignment.provider === "adapter"
+        ? await runSubprocessAdapter({
+            adapter: args.adapterRegistry.get(assignment.adapter ?? ""),
+            model: assignment.model,
+            input: {
+              role: args.role,
+              task: args.task,
+              round: args.round,
+              boardSummary: args.boardSummary,
+              priorMessages: args.bus.list(),
+              timeoutMs
+            }
+          })
+        : await args.providerFactory.get(assignment.provider).generate({
+            assignment,
+            config: getProviderConfigOrThrow(args.config, assignment.provider),
+            input: {
+              role: args.role,
+              task: args.task,
+              round: args.round,
+              boardSummary: args.boardSummary,
+              priorMessages: args.bus.list(),
+              timeoutMs
+            }
+          });
+
+    return {
+      role: args.role,
+      result
+    };
+  } catch (error) {
+    return {
+      role: args.role,
+      errorMessage: formatProviderError(error)
+    };
+  }
+}
+
+function processRoleOutput(args: {
+  output: RoleGenerationOutput;
+  round: number;
+  bus: EventBus;
+  task: string;
+  roundProposals: Proposal[];
+  allProposals: Proposal[];
+  totals: RuntimeTotals;
+  budgetUsd: number;
+}): void {
+  if (args.output.errorMessage) {
+    args.bus.emit({
+      round: args.round,
+      role: args.output.role,
+      type: "warning",
+      content: `Role ${args.output.role} failed: ${args.output.errorMessage}`
+    });
+    return;
+  }
+
+  const result = args.output.result;
+  if (!result) {
+    args.bus.emit({
+      round: args.round,
+      role: args.output.role,
+      type: "warning",
+      content: `Role ${args.output.role} produced no output`
+    });
+    return;
+  }
+
+  args.totals.totalCostUsd += result.estimatedCostUsd;
+  args.totals.totalLatencyMs += result.latencyMs;
+  args.totals.providersUsed.add(result.provider);
+
+  args.bus.emit({
+    round: args.round,
+    role: args.output.role,
+    type: "role_response",
+    content: result.text,
+    costUsd: result.estimatedCostUsd
+  });
+
+  const proposal = parseProposal(args.round, args.output.role, result.text);
+  args.roundProposals.push(proposal);
+  args.allProposals.push(proposal);
+
+  args.bus.emit({
+    round: args.round,
+    role: args.output.role,
+    type: "proposal",
+    content: [
+      `id: ${proposal.id}`,
+      `summary: ${proposal.summary}`,
+      `diffPlan: ${proposal.diffPlan}`
+    ].join("\n")
+  });
+
+  if (
+    !args.totals.budgetWarningEmitted &&
+    args.totals.totalCostUsd >= args.budgetUsd
+  ) {
+    args.totals.budgetWarningEmitted = true;
+    args.bus.emit({
+      round: args.round,
+      role: "arbiter",
+      type: "warning",
+      content: `Budget limit reached at ${args.totals.totalCostUsd.toFixed(4)} USD`
+    });
+  }
 }
 
 function getRoleTimeoutMs(config: CollabConfig, provider: ProviderName | "adapter"): number {
@@ -298,7 +447,7 @@ function parseList(section: string): string[] {
 
   return section
     .split("\n")
-    .map((line) => line.replace(/^[-*\d.\s]+/, "").trim())
+    .map((line) => line.replace(/^[-*\\d.\\s]+/, "").trim())
     .filter(Boolean)
     .slice(0, 8);
 }

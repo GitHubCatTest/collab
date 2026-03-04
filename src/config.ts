@@ -49,7 +49,8 @@ const DEFAULT_CONFIG: CollabConfig = {
   execution: {
     mode: "patch",
     maxRevisionLoops: 1,
-    requireApplyConfirmation: true
+    requireApplyConfirmation: true,
+    parallelPeerRoles: true
   },
   verification: {
     profile: "basic",
@@ -215,6 +216,10 @@ function validateConfig(config: CollabConfig): void {
 
   if (config.execution.maxRevisionLoops < 0) {
     throw new Error("execution.maxRevisionLoops must be >= 0");
+  }
+
+  if (typeof config.execution.parallelPeerRoles !== "boolean") {
+    throw new Error("execution.parallelPeerRoles must be a boolean");
   }
 
   if (!["plan", "patch", "apply"].includes(config.execution.mode)) {

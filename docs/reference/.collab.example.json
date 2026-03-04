@@ -27,7 +27,8 @@
   "execution": {
     "mode": "patch",
     "maxRevisionLoops": 1,
-    "requireApplyConfirmation": true
+    "requireApplyConfirmation": true,
+    "parallelPeerRoles": true
   },
   "verification": {
     "profile": "basic",

@@ -49,6 +49,7 @@ export interface ExecutionConfig {
   mode: ExecutionMode;
   maxRevisionLoops: number;
   requireApplyConfirmation: boolean;
+  parallelPeerRoles: boolean;
 }
 
 export interface VerificationConfig {

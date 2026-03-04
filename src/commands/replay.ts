@@ -13,12 +13,15 @@ export async function replayCommand(pathArg: string | undefined): Promise<number
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as BusEvent);
+    .map((line) => safeParseEvent(line))
+    .filter((event): event is BusEvent => event !== null);
 
   if (events.length === 0) {
     console.log("No events found in log file.");
     return 0;
   }
+
+  printReplaySummary(events);
 
   let currentRound = -1;
   for (const event of events) {
@@ -32,4 +35,56 @@ export async function replayCommand(pathArg: string | undefined): Promise<number
   }
 
   return 0;
+}
+
+function safeParseEvent(line: string): BusEvent | null {
+  try {
+    return JSON.parse(line) as BusEvent;
+  } catch {
+    return null;
+  }
+}
+
+function printReplaySummary(events: BusEvent[]): void {
+  const rounds = [...new Set(events.map((event) => event.round))].sort((a, b) => a - b);
+  const byType = countBy(events, (event) => event.type);
+  const byRole = countBy(events, (event) => event.role);
+  const warningsCount = byType.warning ?? 0;
+  const verificationCount = byType.verification ?? 0;
+  const totalCostUsd = events.reduce(
+    (sum, event) => sum + (event.costUsd ?? 0),
+    0
+  );
+
+  console.log("Replay Summary");
+  console.log(`- Events: ${events.length}`);
+  console.log(`- Rounds: ${rounds.join(", ")}`);
+  console.log(`- Warnings: ${warningsCount}`);
+  console.log(`- Verification events: ${verificationCount}`);
+  console.log(`- Estimated cost from events: $${totalCostUsd.toFixed(6)}`);
+  console.log("- Event counts by type:");
+  for (const [type, count] of Object.entries(byType).sort((a, b) =>
+    a[0].localeCompare(b[0])
+  )) {
+    console.log(`  - ${type}: ${count}`);
+  }
+  console.log("- Event counts by role:");
+  for (const [role, count] of Object.entries(byRole).sort((a, b) =>
+    a[0].localeCompare(b[0])
+  )) {
+    console.log(`  - ${role}: ${count}`);
+  }
+}
+
+function countBy<T, K extends string>(
+  items: T[],
+  selector: (item: T) => K
+): Record<K, number> {
+  const out = {} as Record<K, number>;
+  for (const item of items) {
+    const key = selector(item);
+    out[key] = (out[key] ?? 0) + 1;
+  }
+
+  return out;
 }
