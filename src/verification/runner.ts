@@ -125,7 +125,7 @@ async function runShellCommand(
 
   return new Promise((resolve) => {
     execFile(
-      "/bin/zsh",
+      "/bin/sh",
       ["-lc", command],
       {
         cwd,
