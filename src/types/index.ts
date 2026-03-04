@@ -1,0 +1,147 @@
+export type AgentRole = "architect" | "implementer" | "reviewer" | "arbiter";
+
+export const AGENT_ROLES: AgentRole[] = [
+  "architect",
+  "implementer",
+  "reviewer",
+  "arbiter"
+];
+
+export type ProviderName = "openrouter" | "anthropic" | "google" | "openai";
+
+export interface RoleAssignment {
+  provider: ProviderName | "adapter";
+  model: string;
+  adapter?: string;
+}
+
+export interface ProviderConfig {
+  apiKeyEnv: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+}
+
+export interface SubscriptionAdapterConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  enabled?: boolean;
+}
+
+export interface LimitsConfig {
+  maxRounds: number;
+  budgetUsd: number;
+  timeoutSec: number;
+}
+
+export interface TelemetryConfig {
+  enabled: boolean;
+  endpoint?: string;
+}
+
+export interface CollabConfig {
+  roles: Record<AgentRole, RoleAssignment>;
+  providers: Partial<Record<ProviderName, ProviderConfig>>;
+  subscriptionAdapters: SubscriptionAdapterConfig[];
+  limits: LimitsConfig;
+  telemetry: TelemetryConfig;
+  outputDir?: string;
+}
+
+export interface RunCliOptions {
+  repoPath?: string;
+  maxRounds?: number;
+  budgetUsd?: number;
+  timeoutSec?: number;
+  outDir?: string;
+  json?: boolean;
+}
+
+export interface GenerateInput {
+  role: AgentRole;
+  task: string;
+  round: number;
+  boardSummary: string;
+  priorMessages: BusEvent[];
+  timeoutMs: number;
+}
+
+export interface GenerateResult {
+  text: string;
+  provider: ProviderName | "adapter";
+  model: string;
+  latencyMs: number;
+  estimatedCostUsd: number;
+}
+
+export interface Proposal {
+  id: string;
+  round: number;
+  authorRole: Exclude<AgentRole, "arbiter">;
+  summary: string;
+  diffPlan: string;
+  risks: string[];
+  tests: string[];
+  evidence: string[];
+  rawText: string;
+}
+
+export interface ProposalScores {
+  alignment: number;
+  feasibility: number;
+  safety: number;
+  testability: number;
+  efficiency: number;
+  weightedTotal: number;
+}
+
+export interface ArbiterDecision {
+  winnerId: string;
+  scores: Record<string, ProposalScores>;
+  rationale: string;
+  alternatives: string[];
+}
+
+export interface BusEvent {
+  id: string;
+  ts: string;
+  sessionId: string;
+  round: number;
+  role: AgentRole;
+  type:
+    | "role_response"
+    | "proposal"
+    | "arbiter_decision"
+    | "system"
+    | "warning";
+  content: string;
+  refs?: string[];
+  costUsd?: number;
+}
+
+export interface SessionArtifacts {
+  finalPath: string;
+  diffPath: string;
+  logPath: string;
+  summaryPath: string;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  task: string;
+  roundsCompleted: number;
+  totalCostUsd: number;
+  totalLatencyMs: number;
+  providersUsed: string[];
+  winnerProposalId: string;
+  outputDir: string;
+}
+
+export interface OrchestrationResult {
+  sessionId: string;
+  proposals: Proposal[];
+  winningProposal: Proposal;
+  arbiterDecision: ArbiterDecision;
+  events: BusEvent[];
+  summary: SessionSummary;
+}

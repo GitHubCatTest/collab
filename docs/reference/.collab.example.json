@@ -1,0 +1,30 @@
+{
+  "roles": {
+    "architect": { "provider": "google", "model": "gemini-2.0-pro" },
+    "implementer": { "provider": "openai", "model": "gpt-5-codex" },
+    "reviewer": { "provider": "anthropic", "model": "claude-opus-4.6" },
+    "arbiter": { "provider": "anthropic", "model": "claude-opus-4.6" }
+  },
+  "providers": {
+    "openrouter": { "apiKeyEnv": "OPENROUTER_API_KEY" },
+    "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" },
+    "google": { "apiKeyEnv": "GOOGLE_API_KEY" },
+    "openai": { "apiKeyEnv": "OPENAI_API_KEY" }
+  },
+  "subscriptionAdapters": [
+    {
+      "name": "claude-cli",
+      "command": "claude",
+      "args": ["--print-json"],
+      "enabled": false
+    }
+  ],
+  "limits": {
+    "maxRounds": 3,
+    "budgetUsd": 5,
+    "timeoutSec": 600
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}
