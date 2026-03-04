@@ -27,6 +27,7 @@ Config precedence:
 Telemetry is disabled by default and must be explicitly enabled.
 
 Example config: [`docs/reference/.collab.example.json`](docs/reference/.collab.example.json)
+Adapter protocol: [`docs/reference/ADAPTER_PROTOCOL.md`](docs/reference/ADAPTER_PROTOCOL.md)
 
 ## Security and Privacy
 

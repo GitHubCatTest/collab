@@ -13,10 +13,10 @@
 - GitHub project foundation: CI, CodeQL, secret scanning, issue/PR templates
 - OSS docs foundation: contributing, security policy, code of conduct, license
 - Provider policy documentation and subscription-safe boundaries
+- Adapter protocol documentation and runnable example adapter script
 
 ## In Progress
 
-- Example adapter script and richer adapter contracts
 - Additional end-to-end orchestration tests
 - Release packaging and versioning automation
 
