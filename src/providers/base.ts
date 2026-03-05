@@ -1,32 +1,72 @@
 import type {
-  GenerateInput,
-  GenerateResult,
-  ProviderConfig,
-  ProviderName
-} from "../types/index.js";
+  ProviderCompletion,
+  ProviderMessage,
+  ProviderName,
+  ProviderRuntimeConfig
+} from "./types.js";
 import {
   ProviderRequestError,
   classifyHttpError,
   classifyUnknownError
 } from "./errors.js";
+import { estimateTokenCostUsd } from "../pricing.js";
 
-interface JsonRequestArgs {
+export interface JsonRequestArgs {
   url: string;
   method?: "GET" | "POST";
   headers?: Record<string, string>;
   body?: unknown;
   timeoutMs: number;
   maxRetries?: number;
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
+  retryJitterMs?: number;
 }
 
 export abstract class BaseProvider {
-  constructor(public readonly name: ProviderName) {}
+  readonly id: string;
+  readonly provider: ProviderName;
+  readonly model: string;
+  private readonly runtimeConfig?: ProviderRuntimeConfig;
 
-  protected getApiKey(config: ProviderConfig): string {
-    const key = process.env[config.apiKeyEnv];
+  constructor(provider: ProviderName, runtimeConfig?: ProviderRuntimeConfig) {
+    this.id = provider;
+    this.provider = provider;
+    this.model = runtimeConfig?.model ?? "unknown";
+    this.runtimeConfig = runtimeConfig;
+  }
+
+  abstract complete(
+    messages: ProviderMessage[],
+    options?: { maxOutputTokens?: number }
+  ): Promise<ProviderCompletion>;
+
+  protected getRuntimeConfig(): ProviderRuntimeConfig {
+    if (!this.runtimeConfig) {
+      throw new ProviderRequestError({
+        message: `${this.provider} provider runtime config is missing`,
+        code: "invalid_request",
+        retryable: false
+      });
+    }
+
+    return this.runtimeConfig;
+  }
+
+  protected getApiKey(config?: ProviderRuntimeConfig): string {
+    const apiKeyEnv = config?.apiKeyEnv ?? this.runtimeConfig?.apiKeyEnv;
+    if (!apiKeyEnv) {
+      throw new ProviderRequestError({
+        message: `${this.provider} provider apiKeyEnv is not configured`,
+        code: "invalid_request",
+        retryable: false
+      });
+    }
+
+    const key = process.env[apiKeyEnv];
     if (!key) {
       throw new ProviderRequestError({
-        message: `${this.name} provider missing API key in env var ${config.apiKeyEnv}`,
+        message: `${this.provider} provider missing API key in env var ${apiKeyEnv}`,
         code: "auth",
         retryable: false
       });
@@ -37,6 +77,9 @@ export abstract class BaseProvider {
 
   protected async jsonRequest<T>(args: JsonRequestArgs): Promise<T> {
     const maxRetries = args.maxRetries ?? 2;
+    const retryBaseDelayMs = Math.max(0, args.retryBaseDelayMs ?? 250);
+    const retryMaxDelayMs = Math.max(retryBaseDelayMs, args.retryMaxDelayMs ?? 2000);
+    const retryJitterMs = Math.max(0, args.retryJitterMs ?? 120);
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       try {
@@ -47,7 +90,7 @@ export abstract class BaseProvider {
           const classified = classifyHttpError(response.status);
 
           throw new ProviderRequestError({
-            message: `${this.name} request failed: ${response.status} ${body}`,
+            message: `${this.provider} request failed: ${response.status} ${body}`,
             code: classified.code,
             retryable: classified.retryable,
             status: response.status,
@@ -63,14 +106,16 @@ export abstract class BaseProvider {
           throw typed;
         }
 
-        const delayMs = 250 * 2 ** attempt + Math.floor(Math.random() * 120);
-        // Retry transient provider/network issues with capped backoff.
-        await sleep(Math.min(delayMs, 2000));
+        const delayMs =
+          retryBaseDelayMs * 2 ** attempt + Math.floor(Math.random() * retryJitterMs);
+        if (delayMs > 0) {
+          await sleep(Math.min(delayMs, retryMaxDelayMs));
+        }
       }
     }
 
     throw new ProviderRequestError({
-      message: `${this.name} request failed after retries`,
+      message: `${this.provider} request failed after retries`,
       code: "unknown",
       retryable: false
     });
@@ -95,47 +140,75 @@ export abstract class BaseProvider {
     }
   }
 
-  protected buildPrompts(input: GenerateInput): { system: string; user: string } {
-    const system = [
-      "You are participating in a multi-model engineering team.",
-      "Focus on planning quality and repository-grounded implementation details.",
-      "Do not expose private chain-of-thought."
-    ].join(" ");
-
-    const user = [
-      `Role: ${input.role}`,
-      `Round: ${input.round}`,
-      `Task: ${input.task}`,
-      "Shared board summary:",
-      input.boardSummary || "(empty)",
-      "Return this format:",
-      "SUMMARY:",
-      "DIFF_PLAN:",
-      "RISKS:",
-      "TESTS:",
-      "EVIDENCE:",
-      "PATCH_DIFF: (optional unified diff)"
-    ].join("\n\n");
-
-    return { system, user };
+  protected getTimeoutMs(
+    explicitTimeoutMs: number | undefined,
+    config?: ProviderRuntimeConfig
+  ): number {
+    return explicitTimeoutMs ?? config?.timeoutMs ?? this.runtimeConfig?.timeoutMs ?? 60000;
   }
 
-  protected finalizeResult(
-    provider: ProviderName,
-    model: string,
-    text: string,
-    startMs: number,
-    input: GenerateInput
-  ): GenerateResult {
-    const latencyMs = Date.now() - startMs;
-    const estimatedCostUsd = estimateCostUsd(input, text);
+  protected getMaxOutputTokens(
+    explicitMaxOutputTokens: number | undefined,
+    config?: ProviderRuntimeConfig
+  ): number {
+    if (isPositiveInteger(explicitMaxOutputTokens)) {
+      return explicitMaxOutputTokens;
+    }
+
+    if (isPositiveInteger(config?.maxOutputTokens)) {
+      return config.maxOutputTokens;
+    }
+
+    if (isPositiveInteger(this.runtimeConfig?.maxOutputTokens)) {
+      return this.runtimeConfig.maxOutputTokens;
+    }
+
+    return 1200;
+  }
+
+  protected getModel(explicitModel: string | undefined, fallbackModel?: string): string {
+    const candidate =
+      explicitModel?.trim() ?? fallbackModel?.trim() ?? this.runtimeConfig?.model?.trim();
+    if (!candidate) {
+      throw new ProviderRequestError({
+        message: `${this.provider} provider model is not configured`,
+        code: "invalid_request",
+        retryable: false
+      });
+    }
+
+    return candidate;
+  }
+
+  protected getBaseUrl(explicitBaseUrl: string | undefined, fallbackBaseUrl?: string): string {
+    const candidate = explicitBaseUrl ?? fallbackBaseUrl ?? this.runtimeConfig?.baseUrl;
+    if (!candidate) {
+      throw new ProviderRequestError({
+        message: `${this.provider} provider base URL is not configured`,
+        code: "invalid_request",
+        retryable: false
+      });
+    }
+
+    return candidate;
+  }
+
+  protected asCompletion(args: {
+    content: string;
+    model: string;
+    promptText?: string;
+  }): ProviderCompletion {
+    const inputTokens = estimateTokenCount(args.promptText ?? "");
+    const outputTokens = estimateTokenCount(args.content);
 
     return {
-      text,
-      provider,
-      model,
-      latencyMs,
-      estimatedCostUsd
+      content: args.content,
+      model: args.model,
+      tokens: {
+        input: inputTokens,
+        output: outputTokens
+      },
+      estimatedCostUsd: estimateTokenCostUsd(inputTokens, outputTokens)
     };
   }
 }
@@ -144,6 +217,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function estimateTokenCount(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 function normalizeProviderError(error: unknown): ProviderRequestError {
@@ -157,20 +238,4 @@ function normalizeProviderError(error: unknown): ProviderRequestError {
     code: classified.code,
     retryable: classified.retryable
   });
-}
-
-export function estimateCostUsd(input: GenerateInput, outputText: string): number {
-  const estimatedInputTokens = Math.max(
-    50,
-    Math.ceil((input.task.length + input.boardSummary.length + 220) / 4)
-  );
-  const estimatedOutputTokens = Math.max(50, Math.ceil(outputText.length / 4));
-
-  // Conservative blended estimate for mixed frontier models.
-  const inputRate = 0.00001;
-  const outputRate = 0.00003;
-
-  return Number(
-    (estimatedInputTokens * inputRate + estimatedOutputTokens * outputRate).toFixed(6)
-  );
 }

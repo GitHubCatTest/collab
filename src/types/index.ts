@@ -1,6 +1,8 @@
 export type AgentRole = "architect" | "implementer" | "reviewer" | "arbiter";
 export type ExecutionMode = "plan" | "patch" | "apply";
 export type VerificationProfile = "none" | "basic" | "strict";
+export type TeamMode = "manual" | "auto";
+export type TeamRoleStrategy = "strengths_first" | "fixed";
 export type SessionState =
   | "init"
   | "planning"
@@ -36,6 +38,13 @@ export interface SubscriptionAdapterConfig {
   name: string;
   command: string;
   args?: string[];
+  outputFormat?: "sections" | "json";
+  payloadMode?: "stdin" | "env";
+  inheritEnv?: boolean;
+  passEnv?: string[];
+  testArgs?: string[];
+  healthCheckArgs?: string[];
+  env?: Record<string, string>;
   enabled?: boolean;
 }
 
@@ -50,6 +59,18 @@ export interface ExecutionConfig {
   maxRevisionLoops: number;
   requireApplyConfirmation: boolean;
   parallelPeerRoles: boolean;
+  allowFallbackPatch: boolean;
+}
+
+export interface TeamConfig {
+  mode: TeamMode;
+  roleStrategy: TeamRoleStrategy;
+  debateRounds: number;
+}
+
+export interface QualityConfig {
+  requireEvidence: boolean;
+  rejectUnknownFileRefs: boolean;
 }
 
 export interface VerificationConfig {
@@ -68,6 +89,8 @@ export interface CollabConfig {
   subscriptionAdapters: SubscriptionAdapterConfig[];
   limits: LimitsConfig;
   execution: ExecutionConfig;
+  team: TeamConfig;
+  quality: QualityConfig;
   verification: VerificationConfig;
   telemetry: TelemetryConfig;
   outputDir?: string;
@@ -80,6 +103,10 @@ export interface RunCliOptions {
   timeoutSec?: number;
   mode?: ExecutionMode;
   verify?: VerificationProfile;
+  teamMode?: TeamMode;
+  debateRounds?: number;
+  requireEvidence?: boolean;
+  allowFallbackPatch?: boolean;
   maxRevisionLoops?: number;
   autoYes?: boolean;
   outDir?: string;
@@ -144,7 +171,12 @@ export interface BusEvent {
     | "system"
     | "warning"
     | "state_transition"
-    | "verification";
+    | "verification"
+    | "role_negotiation"
+    | "disagreement_flag"
+    | "evidence_check"
+    | "adapter_health"
+    | "quality_gate";
   content: string;
   refs?: string[];
   costUsd?: number;

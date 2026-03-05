@@ -23,6 +23,11 @@
 - `warning`: degraded behavior, provider errors, budget/time warnings.
 - `state_transition`: run state changes (`planning`, `patching`, `verifying`, etc.).
 - `verification`: verification summary and quality-gate outcomes.
+- `role_negotiation`: round-0 strengths declarations and mapping decisions when team mode is enabled.
+- `disagreement_flag`: emitted when top proposal scores are very close and tie-break signaling is recorded.
+- `evidence_check`: per-proposal evidence/ref analysis used by quality gating.
+- `adapter_health`: adapter availability/degraded-health events for adapter-backed roles.
+- `quality_gate`: final quality gate decision notes, including winner overrides when configured.
 
 ## Example line
 

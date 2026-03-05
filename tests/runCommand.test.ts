@@ -6,7 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "../src/commands/run.js";
 
-async function setupAdapterRepo(): Promise<string> {
+async function setupAdapterRepo(
+  options: { allowFallbackPatch?: boolean } = {}
+): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), "collab-run-test-"));
   await mkdir(join(repo, "src"), { recursive: true });
   await writeFile(join(repo, "src", "index.ts"), "export const ok = true;\n", "utf8");
@@ -64,7 +66,8 @@ async function setupAdapterRepo(): Promise<string> {
       mode: "patch",
       maxRevisionLoops: 0,
       requireApplyConfirmation: true,
-      parallelPeerRoles: true
+      parallelPeerRoles: true,
+      allowFallbackPatch: options.allowFallbackPatch ?? true
     },
     verification: {
       profile: "strict",
@@ -163,4 +166,33 @@ test("runCommand patch mode verifies in temp workspace", async () => {
   assert.equal(summary.mode, "patch");
   assert.equal(summary.verificationPassed, true);
   assert.ok(summary.patchSource === "model" || summary.patchSource === "fallback");
+});
+
+test("runCommand patch mode blocks fallback patch without opt-in", async () => {
+  const repo = await setupAdapterRepo({ allowFallbackPatch: false });
+
+  const code = await withMutedConsole(() =>
+    runCommand("patch module", {
+      repoPath: repo,
+      mode: "patch",
+      verify: "strict",
+      maxRounds: 1,
+      maxRevisionLoops: 0,
+      outDir: ".collab/test-out"
+    })
+  );
+
+  assert.equal(code, 1);
+
+  const attemptDir = await latestAttemptDir(repo);
+  const summaryRaw = await readFile(join(attemptDir, "summary.json"), "utf8");
+  const summary = JSON.parse(summaryRaw) as {
+    mode: string;
+    verificationPassed: boolean;
+    patchSource?: string;
+  };
+
+  assert.equal(summary.mode, "patch");
+  assert.equal(summary.verificationPassed, false);
+  assert.equal(summary.patchSource, "fallback");
 });

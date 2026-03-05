@@ -13,9 +13,48 @@
   },
   "subscriptionAdapters": [
     {
-      "name": "claude-cli",
-      "command": "claude",
-      "args": ["--print-json"],
+      "name": "gemini-subscription",
+      "command": "node",
+      "args": ["scripts/adapters/json-adapter-template.mjs", "--role", "architect"],
+      "outputFormat": "json",
+      "payloadMode": "stdin",
+      "inheritEnv": false,
+      "passEnv": ["PATH", "HOME"],
+      "testArgs": ["scripts/adapters/json-adapter-template.mjs", "--test"],
+      "healthCheckArgs": ["scripts/adapters/health-check.mjs"],
+      "env": {
+        "ADAPTER_PROVIDER": "gemini"
+      },
+      "enabled": false
+    },
+    {
+      "name": "codex-subscription",
+      "command": "node",
+      "args": ["scripts/adapters/json-adapter-template.mjs", "--role", "implementer"],
+      "outputFormat": "json",
+      "payloadMode": "stdin",
+      "inheritEnv": false,
+      "passEnv": ["PATH", "HOME"],
+      "testArgs": ["scripts/adapters/json-adapter-template.mjs", "--test"],
+      "healthCheckArgs": ["scripts/adapters/health-check.mjs"],
+      "env": {
+        "ADAPTER_PROVIDER": "codex"
+      },
+      "enabled": false
+    },
+    {
+      "name": "claude-subscription",
+      "command": "node",
+      "args": ["scripts/adapters/json-adapter-template.mjs", "--role", "reviewer"],
+      "outputFormat": "json",
+      "payloadMode": "stdin",
+      "inheritEnv": false,
+      "passEnv": ["PATH", "HOME"],
+      "testArgs": ["scripts/adapters/json-adapter-template.mjs", "--test"],
+      "healthCheckArgs": ["scripts/adapters/health-check.mjs"],
+      "env": {
+        "ADAPTER_PROVIDER": "claude"
+      },
       "enabled": false
     }
   ],
@@ -28,7 +67,17 @@
     "mode": "patch",
     "maxRevisionLoops": 1,
     "requireApplyConfirmation": true,
-    "parallelPeerRoles": true
+    "parallelPeerRoles": true,
+    "allowFallbackPatch": false
+  },
+  "team": {
+    "mode": "auto",
+    "roleStrategy": "strengths_first",
+    "debateRounds": 3
+  },
+  "quality": {
+    "requireEvidence": true,
+    "rejectUnknownFileRefs": true
   },
   "verification": {
     "profile": "basic",

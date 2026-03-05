@@ -13,5 +13,31 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "src/index.ts",
+    "src/server.ts",
+    "src/config.ts",
+    "src/pricing.ts",
+    "src/pipeline/**/*.ts",
+    "src/providers/base.ts",
+    "src/providers/errors.ts",
+    "src/providers/types.ts",
+    "src/providers/openai.ts",
+    "src/providers/anthropic.ts",
+    "src/providers/google.ts",
+    "src/providers/subscription.ts",
+    "src/providers/factory.ts",
+    "src/adapters/subscription.ts",
+    "src/tools/**/*.ts",
+    "scripts/mcp-smoke.ts",
+    "tests/pipeline.moa.test.ts",
+    "tests/pipeline.parser.test.ts",
+    "tests/pricing.test.ts",
+    "tests/providers.base.test.ts",
+    "tests/subscriptionProvider.test.ts",
+    "tests/subscriptionCliAdapters.test.ts",
+    "tests/tools.plan.test.ts",
+    "tests/tools.compare-review.test.ts",
+    "tests/mcp.smoke.test.ts"
+  ]
 }

@@ -1,69 +1,187 @@
-# collab
+# collab-mcp
 
-Terminal-native heterogeneous multi-model development agent CLI.
+Multi-model collaborative planning MCP server for CLIs and IDEs.
 
-## Commands
+`collab-mcp` runs a Mixture-of-Agents (MoA) planning pipeline across OpenAI, Anthropic, and Google models, then returns a structured plan with agreements, disagreements, tech-stack choices, implementation steps, and risks.
 
-- `collab run "<task>"`
-- `collab chat`
-- `collab eval run --suite smoke|regression [--json]`
-- `collab doctor`
-- `collab adapters list`
-- `collab replay <session.ndjson>`
+## Features
 
-## Quick start
+- MCP stdio server (`plan`, `compare`, `review` tools)
+- Multi-model seed -> refine -> synthesize pipeline
+- Graceful degradation (`Promise.allSettled`) with clear provider errors
+- Cost-aware defaults (low-cost models, output-token caps, bounded layers)
+- Structured output with parser fallback for imperfect model formatting
 
-1. Install dependencies: `npm install`
-2. Run in dev mode: `npm run dev -- run "summarize this repo"`
-3. Build: `npm run build`
-4. Diagnose setup: `npm run dev -- doctor`
-5. Interactive follow-up mode:
-   - `npm run dev -- chat --mode plan`
-6. Production-style run example:
-   - `npm run dev -- run "refactor auth module" --mode patch --verify strict --max-revisions 2`
-7. Apply mode (with explicit confirmation by default):
-   - `npm run dev -- run "implement rate limiter" --mode apply --verify basic`
-8. Eval harness:
-   - `npm run eval:smoke`
-   - `npm run eval:regression`
+## Install
 
-## Configuration
+```bash
+npm install
+npm run build
+```
 
-Config precedence:
+Run locally:
 
-1. CLI flags
-2. `.collab.json` (project root)
-3. `~/.config/collab/config.json`
+```bash
+npx tsx src/index.ts
+```
 
-Telemetry is disabled by default and must be explicitly enabled.
+## MCP Configuration
 
-Key run flags:
+Example MCP server config:
 
-- `--mode plan|patch|apply`
-- `--verify none|basic|strict`
-- `--max-revisions <n>`
-- `--yes` (skip apply confirmation prompt)
+```json
+{
+  "mcpServers": {
+    "collab": {
+      "command": "npx",
+      "args": ["-y", "collab-mcp"],
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "GOOGLE_API_KEY": "AIza...",
+        "COLLAB_DEFAULT_LAYERS": "2",
+        "COLLAB_MAX_OUTPUT_TOKENS": "1200"
+      }
+    }
+  }
+}
+```
 
-Example config: [`docs/reference/.collab.example.json`](docs/reference/.collab.example.json)
-Adapter protocol: [`docs/reference/ADAPTER_PROTOCOL.md`](docs/reference/ADAPTER_PROTOCOL.md)
-Event schema: [`docs/reference/EVENT_SCHEMA.md`](docs/reference/EVENT_SCHEMA.md)
+At least two providers must be configured for collaborative planning.
 
-## Security and Privacy
+## Tools
 
-- Logs and artifacts are redacted for common credential/token patterns.
-- Telemetry is opt-in only.
-- No browser scraping or token extraction from web subscriptions is supported.
-- See [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md) and [`docs/AUTH_AND_PROVIDER_POLICIES.md`](docs/AUTH_AND_PROVIDER_POLICIES.md).
+### `plan`
 
-## Project Tracking
+Input:
 
-- Plan: [`docs/project/PLAN.md`](docs/project/PLAN.md)
-- Status: [`docs/project/STATUS.md`](docs/project/STATUS.md)
-- Roadmap: [`ROADMAP.md`](ROADMAP.md)
-- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- `task` (string, required)
+- `context` (string, optional)
+- `layers` (1-4, optional)
+- `focus` (`architecture|techstack|implementation|security|general`, optional)
+- `providers` (`openai|anthropic|google`[], optional)
+- `synthesizer` (`openai|anthropic|google`, optional)
 
-## Release and Eval Automation
+Output:
 
-- CI runs on Node 20 and Node 22.
-- Nightly smoke eval runs via GitHub Actions (`nightly-eval.yml`).
-- Tagging `v*` triggers release workflow that validates, packs npm artifact, creates GitHub release, and optionally publishes to npm when `NPM_TOKEN` is configured.
+- `plan.agreements[]`
+- `plan.disagreements[]`
+- `plan.tech_stack[]`
+- `plan.implementation_steps[]`
+- `plan.risks[]`
+- `meta` (provider IDs used, layers run, token/cost estimate, duration, failures)
+
+### `compare`
+
+Compares options across models and returns:
+
+- `recommendation`
+- `rationale`
+- `analysis` (structured plan sections)
+- `meta`
+
+### `review`
+
+Reviews an existing plan and returns:
+
+- `review` (structured critique sections)
+- `meta`
+
+## Cost Controls
+
+Environment variables:
+
+- `COLLAB_DEFAULT_LAYERS` (default `2`)
+- `COLLAB_MAX_LAYERS` (default `4`)
+- `COLLAB_MAX_OUTPUT_TOKENS` (default `1200`)
+- `COLLAB_TIMEOUT_MS` (default `60000`)
+- `COLLAB_DEFAULT_SYNTHESIZER` (`openai|anthropic|google`)
+
+Model defaults are intentionally low-cost:
+
+- OpenAI: `gpt-4o-mini`
+- Anthropic: `claude-3-5-haiku-latest`
+- Google: `gemini-2.0-flash`
+
+`estimated_cost_usd` is a heuristic estimate (not provider billing truth) using project-wide token rates:
+
+- input tokens: `0.000001` USD/token
+- output tokens: `0.000003` USD/token
+
+## Subscription Transport (Adapter Protocol)
+
+Direct provider API keys are the default path. You can switch any provider to local subscription transport using per-provider env vars:
+
+- `COLLAB_OPENAI_TRANSPORT=subscription`
+- `COLLAB_OPENAI_ADAPTER_COMMAND=/absolute/path/to/adapter`
+- `COLLAB_OPENAI_ADAPTER_ARGS='[\"--flag\",\"value\"]'`
+- `COLLAB_OPENAI_ADAPTER_TIMEOUT_MS=60000`
+
+Same pattern applies to `OPENAI | ANTHROPIC | GOOGLE` provider prefixes.
+
+When enabled, Collab invokes the adapter subprocess and writes this JSON payload to stdin:
+
+```json
+{
+  "provider": "openai|anthropic|google",
+  "model": "string",
+  "messages": [{ "role": "system|user|assistant", "content": "string" }],
+  "max_output_tokens": 1200
+}
+```
+
+Adapter stdout may be either:
+
+- Plain text response body
+- JSON: `{ "content": "string", "tokens": { "input": 123, "output": 456 } }`
+
+### Quick Subscription Setup (Gemini + Codex)
+
+If you do not have API keys, you can run two providers in subscription mode (Google + OpenAI) using official CLIs:
+
+- `scripts/adapters/gemini-cli-adapter.mjs`
+- `scripts/adapters/codex-cli-adapter.mjs`
+
+MCP server `env` example:
+
+```json
+{
+  "COLLAB_GOOGLE_TRANSPORT": "subscription",
+  "COLLAB_GOOGLE_ADAPTER_COMMAND": "node",
+  "COLLAB_GOOGLE_ADAPTER_ARGS": "[\"/ABS/PATH/scripts/adapters/gemini-cli-adapter.mjs\"]",
+  "COLLAB_OPENAI_TRANSPORT": "subscription",
+  "COLLAB_OPENAI_ADAPTER_COMMAND": "node",
+  "COLLAB_OPENAI_ADAPTER_ARGS": "[\"/ABS/PATH/scripts/adapters/codex-cli-adapter.mjs\"]",
+  "COLLAB_DEFAULT_SYNTHESIZER": "google"
+}
+```
+
+Notes:
+
+- Keep API mode enabled for any provider where you set API keys; subscription mode is optional per provider.
+- Antigravity/Cursor/etc. are MCP hosts; subscription adapter settings apply to this server process, not the host app.
+- Use only official login flows from provider CLIs. Do not use token extraction/scraping proxies.
+
+## MCP Smoke Test
+
+Run a quick MCP wiring check:
+
+```bash
+npm run smoke:mcp
+```
+
+Use this before release cuts or after MCP tool/server changes.
+
+## Development
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+## Security
+
+- Never commit API keys.
+- Keep MCP env values local.
+- See [SECURITY.md](SECURITY.md) for disclosure policy.

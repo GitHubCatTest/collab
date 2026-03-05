@@ -1,30 +1,73 @@
-import type { ProviderName } from "../types/index.js";
+import type { CollabMcpConfig } from "../config.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { GoogleProvider } from "./google.js";
 import { OpenAIProvider } from "./openai.js";
-import { OpenRouterProvider } from "./openrouter.js";
-import type { ProviderClient } from "./types.js";
+import { SubscriptionProvider } from "./subscription.js";
+import type {
+  ProviderClient,
+  ProviderName,
+  ProviderRuntimeConfig,
+  ProviderTransport
+} from "./types.js";
 
-export class ProviderFactory {
-  private readonly providers = new Map<ProviderName, ProviderClient>();
+function uniqueProviderNames(names: ProviderName[]): ProviderName[] {
+  return [...new Set(names)];
+}
 
-  constructor() {
-    this.providers.set("openrouter", new OpenRouterProvider());
-    this.providers.set("anthropic", new AnthropicProvider());
-    this.providers.set("google", new GoogleProvider());
-    this.providers.set("openai", new OpenAIProvider());
+function buildProvider(
+  providerName: ProviderName,
+  providerConfig: ProviderRuntimeConfig
+): ProviderClient {
+  const transport = resolveTransport(providerConfig);
+
+  if (transport === "subscription") {
+    return new SubscriptionProvider(providerConfig);
   }
 
-  get(name: ProviderName): ProviderClient {
-    const provider = this.providers.get(name);
-    if (!provider) {
-      throw new Error(`Unsupported provider: ${name}`);
+  if (providerName === "openai") {
+    return new OpenAIProvider(providerConfig);
+  }
+
+  if (providerName === "anthropic") {
+    return new AnthropicProvider(providerConfig);
+  }
+
+  return new GoogleProvider(providerConfig);
+}
+
+function resolveTransport(config: ProviderRuntimeConfig): ProviderTransport {
+  if (config.transport === "subscription" && config.subscription?.command) {
+    return "subscription";
+  }
+
+  return "api";
+}
+
+export function createProviders(
+  config: CollabMcpConfig,
+  preferredProviders?: ProviderName[]
+): ProviderClient[] {
+  const selectedNames = uniqueProviderNames(
+    preferredProviders && preferredProviders.length > 0
+      ? preferredProviders
+      : (Object.keys(config.providers) as ProviderName[])
+  );
+
+  const providers: ProviderClient[] = [];
+  for (const providerName of selectedNames) {
+    const providerConfig = config.providers[providerName];
+    if (!providerConfig?.available) {
+      continue;
     }
 
-    return provider;
+    providers.push(buildProvider(providerName, providerConfig));
   }
 
-  list(): ProviderClient[] {
-    return [...this.providers.values()];
+  if (providers.length < 2) {
+    throw new Error(
+      `Collaboration requires at least 2 configured providers, but only ${providers.length} are available.`
+    );
   }
+
+  return providers;
 }

@@ -54,3 +54,24 @@ test("parseRunArgs rejects missing option values and invalid numbers", () => {
   assert.throws(() => parseRunArgs(["--max-rounds", "0", "task"]));
   assert.throws(() => parseRunArgs(["--max-revisions", "-1", "task"]));
 });
+
+test("parseRunArgs parses v0.2 team/debate/evidence flags", () => {
+  const parsed = parseRunArgs([
+    "--team",
+    "auto",
+    "--debate-rounds",
+    "2",
+    "--require-evidence",
+    "ship",
+    "fixes"
+  ]);
+
+  assert.equal(parsed.task, "ship fixes");
+  assert.equal(parsed.options.teamMode, "auto");
+  assert.equal(parsed.options.debateRounds, 2);
+  assert.equal(parsed.options.requireEvidence, true);
+});
+
+test("parseRunArgs validates v0.2 team flag values", () => {
+  assert.throws(() => parseRunArgs(["--team", "hybrid", "task"]));
+});

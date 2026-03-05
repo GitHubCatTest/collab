@@ -1,55 +1,90 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 
 /**
- * Example collab subprocess adapter.
+ * Minimal subscription adapter template for collab-mcp.
  *
- * Input:
- *   process.env.COLLAB_ADAPTER_PAYLOAD (JSON)
+ * Input (stdin JSON):
+ * {
+ *   provider: "openai|anthropic|google",
+ *   model: "...",
+ *   messages: [{ role, content }],
+ *   max_output_tokens: number
+ * }
+ *
  * Output:
- *   plain text with sections expected by collab parser:
- *   SUMMARY / DIFF_PLAN / RISKS / TESTS / EVIDENCE
+ * - Plain text, or JSON: { content: string, tokens?: { input, output } }
  */
 
 function main() {
-  const payloadRaw = process.env.COLLAB_ADAPTER_PAYLOAD;
-  if (!payloadRaw) {
-    console.error("COLLAB_ADAPTER_PAYLOAD is missing");
-    process.exit(1);
-  }
+  const payload = readPayload();
 
-  let payload;
-  try {
-    payload = JSON.parse(payloadRaw);
-  } catch (error) {
-    console.error(`Invalid COLLAB_ADAPTER_PAYLOAD JSON: ${String(error)}`);
-    process.exit(1);
-  }
+  const lastUser = [...payload.messages]
+    .reverse()
+    .find((message) => message.role === "user")?.content;
 
-  const task = String(payload.task ?? "unknown task");
-  const round = Number(payload.round ?? 0);
-  const role = String(payload.role ?? "unknown");
-
-  const output = [
-    "SUMMARY:",
-    `[example-adapter] ${role} recommendation for: ${task}`,
+  const content = [
+    `Provider: ${payload.provider}`,
+    `Model: ${payload.model || "(default)"}`,
     "",
-    "DIFF_PLAN:",
-    `- Create focused changes for round ${round}`,
-    "- Keep edits incremental and test-first",
-    "- Avoid unrelated file churn",
-    "",
-    "RISKS:",
-    "- Adapter output may be generic unless connected to a real provider CLI",
-    "",
-    "TESTS:",
-    "- Run unit tests for changed modules",
-    "- Run integration tests for workflow paths",
-    "",
-    "EVIDENCE:",
-    "- Based on payload task and round metadata"
+    "Example adapter response:",
+    lastUser || "(no user message found)"
   ].join("\n");
 
-  process.stdout.write(`${output}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ content, tokens: { input: 0, output: Math.ceil(content.length / 4) } })}\n`
+  );
+}
+
+function readPayload() {
+  const raw = readStdinRaw();
+  if (!raw) {
+    fail("Expected JSON payload on stdin");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    fail(`Invalid JSON payload: ${String(error)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    fail("Payload must be an object");
+  }
+
+  const messages = Array.isArray(parsed.messages)
+    ? parsed.messages.filter(
+        (message) =>
+          message &&
+          typeof message === "object" &&
+          (message.role === "system" || message.role === "user" || message.role === "assistant") &&
+          typeof message.content === "string"
+      )
+    : [];
+
+  if (messages.length === 0) {
+    fail("Payload must contain a non-empty messages array");
+  }
+
+  return {
+    provider: String(parsed.provider || "unknown"),
+    model: typeof parsed.model === "string" ? parsed.model : "",
+    messages
+  };
+}
+
+function readStdinRaw() {
+  try {
+    return readFileSync(0, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
 }
 
 main();

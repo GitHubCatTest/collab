@@ -1,6 +1,13 @@
 import type { CollabConfig, SubscriptionAdapterConfig } from "../types/index.js";
 import { commandExists } from "../utils/exec.js";
 
+export interface AdapterDiagnostic {
+  name: string;
+  command: string;
+  commandFound: boolean;
+  outputFormat: "sections" | "json";
+}
+
 export class AdapterRegistry {
   private readonly adaptersByName = new Map<string, SubscriptionAdapterConfig>();
 
@@ -8,6 +15,10 @@ export class AdapterRegistry {
     for (const adapter of config.subscriptionAdapters) {
       if (adapter.enabled === false) {
         continue;
+      }
+
+      if (this.adaptersByName.has(adapter.name)) {
+        throw new Error(`Duplicate subscription adapter name: ${adapter.name}`);
       }
 
       this.adaptersByName.set(adapter.name, adapter);
@@ -27,18 +38,17 @@ export class AdapterRegistry {
     return [...this.adaptersByName.values()];
   }
 
-  async diagnostics(): Promise<
-    Array<{ name: string; command: string; available: boolean }>
-  > {
-    const results: Array<{ name: string; command: string; available: boolean }> = [];
+  async diagnostics(): Promise<AdapterDiagnostic[]> {
+    const results: AdapterDiagnostic[] = [];
 
     for (const adapter of this.adaptersByName.values()) {
       // eslint-disable-next-line no-await-in-loop
-      const available = await commandExists(adapter.command);
+      const commandFound = await commandExists(adapter.command);
       results.push({
         name: adapter.name,
         command: adapter.command,
-        available
+        commandFound,
+        outputFormat: adapter.outputFormat ?? "sections"
       });
     }
 
