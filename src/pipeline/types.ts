@@ -78,11 +78,13 @@ export interface StructuredPlan {
 }
 
 export interface MoaPipelineMeta {
+  // Legacy contract: these identifiers map to provider IDs (openai/anthropic/google).
   modelsUsed: string[];
   layersRun: number;
   totalTokens: number;
   estimatedCostUsd: number;
   durationMs: number;
+  // Legacy contract: these identifiers map to provider IDs.
   failedModels: string[];
 }
 

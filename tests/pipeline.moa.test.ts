@@ -57,7 +57,8 @@ test("runMoaPipeline executes seed/refine/synthesize with graceful degradation",
   assert.equal(result.meta.layersRun, 1);
   assert.deepEqual(result.meta.modelsUsed, ["alpha", "gamma", "beta"]);
   assert.deepEqual(result.meta.failedModels, ["beta"]);
-  assert.ok(result.meta.totalTokens > 0);
+  assert.equal(result.meta.totalTokens, 1190);
+  assert.equal(result.meta.estimatedCostUsd, 0.00287);
   assert.ok(result.meta.durationMs >= 0);
   assert.match(result.synthesisMarkdown, /## Agreements/);
   assert.match(result.synthesisMarkdown, /synthesized-by alpha/i);

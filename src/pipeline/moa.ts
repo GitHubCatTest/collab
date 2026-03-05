@@ -4,6 +4,7 @@ import {
   buildSynthesisMessages
 } from "./prompts.js";
 import { parseStructuredPlan } from "./parser.js";
+import { estimateTokenCostUsd } from "../pricing.js";
 import type {
   MoaPipelineInput,
   MoaPipelineOutput,
@@ -17,8 +18,6 @@ import type {
 } from "./types.js";
 
 const MIN_REQUIRED_SUCCESSES = 2;
-const INPUT_TOKEN_RATE_USD = 0.00001;
-const OUTPUT_TOKEN_RATE_USD = 0.00003;
 
 interface StageErrorArgs {
   stage: MoaStage;
@@ -161,7 +160,7 @@ export async function runMoaPipeline(
       modelsUsed,
       layersRun: layers,
       totalTokens: usage.input + usage.output,
-      estimatedCostUsd: estimateCostUsd(usage),
+      estimatedCostUsd: estimateTokenCostUsd(usage.input, usage.output),
       durationMs: Date.now() - startedAtMs,
       failedModels
     }
@@ -488,12 +487,6 @@ function sumTokenUsage(stages: StageResult[]): TokenUsage {
   }
 
   return { input, output };
-}
-
-function estimateCostUsd(tokens: TokenUsage): number {
-  return Number(
-    (tokens.input * INPUT_TOKEN_RATE_USD + tokens.output * OUTPUT_TOKEN_RATE_USD).toFixed(6)
-  );
 }
 
 function formatError(error: unknown): string {

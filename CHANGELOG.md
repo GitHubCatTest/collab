@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### MCP Migration Notes
+
+#### Changed
+
+- `meta.estimated_cost_usd` now uses a single project-wide heuristic in all MCP pipeline/provider paths:
+  - input token rate: `0.000001` USD/token
+  - output token rate: `0.000003` USD/token
+- This aligns previously inconsistent cost math (the MoA pipeline had been reporting values 10x higher than provider-level estimates).
+- Downstream telemetry consumers should treat this as a metrics-scale correction and re-baseline any budget/alert thresholds built on earlier values.
+
+#### Compatibility
+
+- `meta.models_used` and `meta.failed_models` continue to report provider IDs (`openai`, `anthropic`, `google`) for backward compatibility with progress-event correlation.
+
 ### v0.2 (In Progress)
 
 #### Added

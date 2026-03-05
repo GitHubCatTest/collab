@@ -69,7 +69,7 @@ Output:
 - `plan.tech_stack[]`
 - `plan.implementation_steps[]`
 - `plan.risks[]`
-- `meta` (models used, layers run, token/cost estimate, duration, failures)
+- `meta` (provider IDs used, layers run, token/cost estimate, duration, failures)
 
 ### `compare`
 
@@ -102,6 +102,11 @@ Model defaults are intentionally low-cost:
 - OpenAI: `gpt-4o-mini`
 - Anthropic: `claude-3-5-haiku-latest`
 - Google: `gemini-2.0-flash`
+
+`estimated_cost_usd` is a heuristic estimate (not provider billing truth) using project-wide token rates:
+
+- input tokens: `0.000001` USD/token
+- output tokens: `0.000003` USD/token
 
 ## Subscription Transport (Adapter Protocol)
 

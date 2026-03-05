@@ -8,6 +8,7 @@ import {
   classifyUnknownError,
   type ProviderErrorCode
 } from "./errors.js";
+import { estimateTokenCostUsd } from "../pricing.js";
 import type {
   ProviderClient,
   ProviderCompletion,
@@ -61,7 +62,7 @@ export class SubscriptionProvider extends BaseProvider implements ProviderClient
           input: result.tokens.input,
           output: result.tokens.output
         };
-        completion.estimatedCostUsd = estimateCostUsd(
+        completion.estimatedCostUsd = estimateTokenCostUsd(
           completion.tokens.input,
           completion.tokens.output
         );
@@ -114,8 +115,4 @@ function mapAdapterError(error: SubscriptionAdapterError): {
     code: "invalid_request",
     retryable: false
   };
-}
-
-function estimateCostUsd(inputTokens: number, outputTokens: number): number {
-  return Number((inputTokens * 0.000001 + outputTokens * 0.000003).toFixed(6));
 }

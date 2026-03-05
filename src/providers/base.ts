@@ -9,6 +9,7 @@ import {
   classifyHttpError,
   classifyUnknownError
 } from "./errors.js";
+import { estimateTokenCostUsd } from "../pricing.js";
 
 export interface JsonRequestArgs {
   url: string;
@@ -207,9 +208,7 @@ export abstract class BaseProvider {
         input: inputTokens,
         output: outputTokens
       },
-      estimatedCostUsd: Number(
-        (inputTokens * 0.000001 + outputTokens * 0.000003).toFixed(6)
-      )
+      estimatedCostUsd: estimateTokenCostUsd(inputTokens, outputTokens)
     };
   }
 }
