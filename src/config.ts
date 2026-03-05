@@ -1,251 +1,233 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { readFile } from "node:fs/promises";
-import {
-  AGENT_ROLES,
-  type AgentRole,
-  type CollabConfig,
-  type ProviderConfig,
-  type ProviderName,
-  type RunCliOptions
-} from "./types/index.js";
+import type {
+  ProviderName,
+  ProviderRuntimeConfig,
+  ProviderTransport
+} from "./providers/types.js";
 
-const DEFAULT_CONFIG: CollabConfig = {
-  roles: {
-    architect: { provider: "google", model: "gemini-2.0-pro" },
-    implementer: { provider: "openai", model: "gpt-5-codex" },
-    reviewer: { provider: "anthropic", model: "claude-opus-4.6" },
-    arbiter: { provider: "anthropic", model: "claude-opus-4.6" }
+export interface CollabMcpProviderConfig extends ProviderRuntimeConfig {
+  available: boolean;
+}
+
+export interface CollabMcpConfig {
+  defaultLayers: number;
+  maxLayers: number;
+  timeoutMs: number;
+  maxOutputTokens: number;
+  defaultSynthesizer: ProviderName;
+  providers: Record<ProviderName, CollabMcpProviderConfig>;
+}
+
+const DEFAULT_TIMEOUT_MS = 60000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 1200;
+const DEFAULT_LAYERS = 2;
+const DEFAULT_MAX_LAYERS = 4;
+const DEFAULT_SYNTHESIZER: ProviderName = "anthropic";
+const DEFAULT_PROVIDER_TRANSPORT: ProviderTransport = "api";
+
+const PROVIDER_DEFAULTS: Record<
+  ProviderName,
+  {
+    provider: ProviderName;
+    apiKeyEnv: string;
+    baseUrl: string;
+    modelEnv: string;
+    model: string;
+  }
+> = {
+  openai: {
+    provider: "openai",
+    apiKeyEnv: "OPENAI_API_KEY",
+    baseUrl: "https://api.openai.com/v1/responses",
+    modelEnv: "COLLAB_OPENAI_MODEL",
+    model: "gpt-4o-mini"
   },
-  providers: {
-    openrouter: {
-      apiKeyEnv: "OPENROUTER_API_KEY",
-      baseUrl: "https://openrouter.ai/api/v1/chat/completions",
-      timeoutMs: 120000
-    },
-    anthropic: {
-      apiKeyEnv: "ANTHROPIC_API_KEY",
-      baseUrl: "https://api.anthropic.com/v1/messages",
-      timeoutMs: 120000
-    },
-    google: {
-      apiKeyEnv: "GOOGLE_API_KEY",
-      baseUrl:
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-      timeoutMs: 120000
-    },
-    openai: {
-      apiKeyEnv: "OPENAI_API_KEY",
-      baseUrl: "https://api.openai.com/v1/responses",
-      timeoutMs: 120000
-    }
+  anthropic: {
+    provider: "anthropic",
+    apiKeyEnv: "ANTHROPIC_API_KEY",
+    baseUrl: "https://api.anthropic.com/v1/messages",
+    modelEnv: "COLLAB_ANTHROPIC_MODEL",
+    model: "claude-3-5-haiku-latest"
   },
-  subscriptionAdapters: [],
-  limits: {
-    maxRounds: 3,
-    budgetUsd: 5,
-    timeoutSec: 600
-  },
-  execution: {
-    mode: "patch",
-    maxRevisionLoops: 1,
-    requireApplyConfirmation: true,
-    parallelPeerRoles: true
-  },
-  verification: {
-    profile: "basic",
-    commands: []
-  },
-  telemetry: {
-    enabled: false
-  },
-  outputDir: ".collab/sessions"
+  google: {
+    provider: "google",
+    apiKeyEnv: "GOOGLE_API_KEY",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    modelEnv: "COLLAB_GOOGLE_MODEL",
+    model: "gemini-2.0-flash"
+  }
 };
 
-interface LoadConfigArgs {
-  cwd: string;
-  cli: RunCliOptions;
+export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CollabMcpConfig {
+  const timeoutMs = parseIntInRange(env.COLLAB_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 1000, 300000);
+  const maxOutputTokens = parseIntInRange(
+    env.COLLAB_MAX_OUTPUT_TOKENS,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    128,
+    8192
+  );
+  const maxLayers = parseIntInRange(env.COLLAB_MAX_LAYERS, DEFAULT_MAX_LAYERS, 1, 8);
+  const defaultLayers = parseIntInRange(env.COLLAB_DEFAULT_LAYERS, DEFAULT_LAYERS, 1, maxLayers);
+  const defaultSynthesizer = parseProviderName(
+    env.COLLAB_DEFAULT_SYNTHESIZER,
+    DEFAULT_SYNTHESIZER
+  );
+
+  const providers = Object.fromEntries(
+    (Object.entries(PROVIDER_DEFAULTS) as Array<
+      [
+        ProviderName,
+        {
+          provider: ProviderName;
+          apiKeyEnv: string;
+          baseUrl: string;
+          modelEnv: string;
+          model: string;
+        }
+      ]
+    >).map(([name, defaults]) => {
+      const model = sanitizeString(env[defaults.modelEnv]) ?? defaults.model;
+      const apiKeyValue = sanitizeString(env[defaults.apiKeyEnv]);
+      const providerPrefix = `COLLAB_${name.toUpperCase()}`;
+      const transport = parseProviderTransport(
+        env[`${providerPrefix}_TRANSPORT`],
+        DEFAULT_PROVIDER_TRANSPORT
+      );
+      const adapterCommand = sanitizeString(env[`${providerPrefix}_ADAPTER_COMMAND`]);
+      const adapterArgs = parseJsonStringArray(env[`${providerPrefix}_ADAPTER_ARGS`]);
+      const adapterTimeoutMs =
+        parseOptionalIntInRange(env[`${providerPrefix}_ADAPTER_TIMEOUT_MS`], 100, 300000) ??
+        timeoutMs;
+      const adapterPassEnv = parseEnvKeyArray(env[`${providerPrefix}_ADAPTER_PASS_ENV`]);
+
+      const subscription = adapterCommand
+        ? {
+            command: adapterCommand,
+            args: adapterArgs,
+            timeoutMs: adapterTimeoutMs,
+            passEnv: adapterPassEnv
+          }
+        : undefined;
+
+      const providerConfig: CollabMcpProviderConfig = {
+        provider: defaults.provider,
+        model,
+        apiKeyEnv: defaults.apiKeyEnv,
+        baseUrl: defaults.baseUrl,
+        timeoutMs,
+        maxOutputTokens,
+        transport,
+        subscription,
+        available:
+          transport === "subscription" ? Boolean(subscription?.command) : Boolean(apiKeyValue)
+      };
+
+      return [name, providerConfig];
+    })
+  ) as Record<ProviderName, CollabMcpProviderConfig>;
+
+  return {
+    defaultLayers,
+    maxLayers,
+    timeoutMs,
+    maxOutputTokens,
+    defaultSynthesizer,
+    providers
+  };
 }
 
-export interface LoadConfigResult {
-  config: CollabConfig;
-  loadedFiles: string[];
-}
-
-export async function loadConfig(args: LoadConfigArgs): Promise<LoadConfigResult> {
-  const loadedFiles: string[] = [];
-
-  const userConfigPath = join(homedir(), ".config", "collab", "config.json");
-  const projectConfigPath = join(args.cwd, ".collab.json");
-
-  const userConfig = await loadJsonFile<Partial<CollabConfig>>(userConfigPath);
-  if (userConfig) {
-    loadedFiles.push(userConfigPath);
+function parseIntInRange(
+  rawValue: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const value = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(value)) {
+    return fallback;
   }
 
-  const projectConfig = await loadJsonFile<Partial<CollabConfig>>(projectConfigPath);
-  if (projectConfig) {
-    loadedFiles.push(projectConfigPath);
+  if (value < min) {
+    return min;
   }
 
-  const merged = mergeConfig(DEFAULT_CONFIG, userConfig ?? {}, projectConfig ?? {});
-  const config = applyCliOverrides(merged, args.cli);
-  validateConfig(config);
+  if (value > max) {
+    return max;
+  }
 
-  return { config, loadedFiles };
+  return value;
 }
 
-async function loadJsonFile<T>(path: string): Promise<T | null> {
+function parseOptionalIntInRange(
+  rawValue: string | undefined,
+  min: number,
+  max: number
+): number | undefined {
+  const value = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  if (value < min) {
+    return min;
+  }
+
+  if (value > max) {
+    return max;
+  }
+
+  return value;
+}
+
+function parseProviderName(
+  rawValue: string | undefined,
+  fallback: ProviderName
+): ProviderName {
+  const value = sanitizeString(rawValue);
+  if (value === "openai" || value === "anthropic" || value === "google") {
+    return value;
+  }
+
+  return fallback;
+}
+
+function parseProviderTransport(
+  rawValue: string | undefined,
+  fallback: ProviderTransport
+): ProviderTransport {
+  const value = sanitizeString(rawValue)?.toLowerCase();
+  if (value === "api" || value === "subscription") {
+    return value;
+  }
+
+  return fallback;
+}
+
+function parseJsonStringArray(rawValue: string | undefined): string[] {
+  const value = sanitizeString(rawValue);
+  if (!value) {
+    return [];
+  }
+
   try {
-    const raw = await readFile(path, "utf8");
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    const typed = error as NodeJS.ErrnoException;
-    if (typed.code === "ENOENT") {
-      return null;
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
     }
 
-    throw new Error(`Failed to load config from ${path}: ${typed.message}`);
+    return parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim());
+  } catch {
+    return [];
   }
 }
 
-function mergeConfig(
-  defaults: CollabConfig,
-  user: Partial<CollabConfig>,
-  project: Partial<CollabConfig>
-): CollabConfig {
-  return {
-    roles: {
-      ...defaults.roles,
-      ...(user.roles ?? {}),
-      ...(project.roles ?? {})
-    },
-    providers: mergeProviders(defaults.providers, user.providers, project.providers),
-    subscriptionAdapters:
-      project.subscriptionAdapters ??
-      user.subscriptionAdapters ??
-      defaults.subscriptionAdapters,
-    limits: {
-      ...defaults.limits,
-      ...(user.limits ?? {}),
-      ...(project.limits ?? {})
-    },
-    execution: {
-      ...defaults.execution,
-      ...(user.execution ?? {}),
-      ...(project.execution ?? {})
-    },
-    verification: {
-      ...defaults.verification,
-      ...(user.verification ?? {}),
-      ...(project.verification ?? {})
-    },
-    telemetry: {
-      ...defaults.telemetry,
-      ...(user.telemetry ?? {}),
-      ...(project.telemetry ?? {})
-    },
-    outputDir: project.outputDir ?? user.outputDir ?? defaults.outputDir
-  };
+function parseEnvKeyArray(rawValue: string | undefined): string[] {
+  const values = parseJsonStringArray(rawValue);
+  return values.filter((key) => /^[A-Z_][A-Z0-9_]*$/.test(key));
 }
 
-function mergeProviders(
-  defaults: Partial<Record<ProviderName, CollabConfig["providers"][ProviderName]>>,
-  user?: Partial<Record<ProviderName, CollabConfig["providers"][ProviderName]>>,
-  project?: Partial<Record<ProviderName, CollabConfig["providers"][ProviderName]>>
-): CollabConfig["providers"] {
-  const providers: CollabConfig["providers"] = {};
-  const names: ProviderName[] = ["openrouter", "anthropic", "google", "openai"];
-
-  for (const name of names) {
-    const merged = {
-      ...(defaults[name] ?? {}),
-      ...(user?.[name] ?? {}),
-      ...(project?.[name] ?? {})
-    };
-
-    if (!merged.apiKeyEnv) {
-      throw new Error(`providers.${name}.apiKeyEnv is required`);
-    }
-
-    providers[name] = merged as ProviderConfig;
-  }
-
-  return providers;
-}
-
-function applyCliOverrides(config: CollabConfig, cli: RunCliOptions): CollabConfig {
-  return {
-    ...config,
-    limits: {
-      ...config.limits,
-      ...(cli.maxRounds ? { maxRounds: cli.maxRounds } : {}),
-      ...(cli.budgetUsd ? { budgetUsd: cli.budgetUsd } : {}),
-      ...(cli.timeoutSec ? { timeoutSec: cli.timeoutSec } : {})
-    },
-    execution: {
-      ...config.execution,
-      ...(cli.mode ? { mode: cli.mode } : {}),
-      ...(cli.maxRevisionLoops !== undefined
-        ? { maxRevisionLoops: cli.maxRevisionLoops }
-        : {}),
-      ...(cli.autoYes !== undefined
-        ? { requireApplyConfirmation: !cli.autoYes }
-        : {})
-    },
-    verification: {
-      ...config.verification,
-      ...(cli.verify ? { profile: cli.verify } : {})
-    },
-    outputDir: cli.outDir ?? config.outputDir
-  };
-}
-
-function validateConfig(config: CollabConfig): void {
-  if (config.limits.maxRounds <= 0) {
-    throw new Error("limits.maxRounds must be > 0");
-  }
-
-  if (config.limits.budgetUsd <= 0) {
-    throw new Error("limits.budgetUsd must be > 0");
-  }
-
-  if (config.limits.timeoutSec <= 0) {
-    throw new Error("limits.timeoutSec must be > 0");
-  }
-
-  if (config.execution.maxRevisionLoops < 0) {
-    throw new Error("execution.maxRevisionLoops must be >= 0");
-  }
-
-  if (typeof config.execution.parallelPeerRoles !== "boolean") {
-    throw new Error("execution.parallelPeerRoles must be a boolean");
-  }
-
-  if (!["plan", "patch", "apply"].includes(config.execution.mode)) {
-    throw new Error("execution.mode must be one of: plan, patch, apply");
-  }
-
-  if (!["none", "basic", "strict"].includes(config.verification.profile)) {
-    throw new Error("verification.profile must be one of: none, basic, strict");
-  }
-
-  for (const role of AGENT_ROLES) {
-    assertRoleAssignment(role, config);
-  }
-}
-
-function assertRoleAssignment(role: AgentRole, config: CollabConfig): void {
-  const assignment = config.roles[role];
-  if (!assignment?.model || !assignment?.provider) {
-    throw new Error(`roles.${role} requires provider and model`);
-  }
-
-  if (assignment.provider === "adapter" && !assignment.adapter) {
-    throw new Error(`roles.${role} uses adapter provider but no adapter name was set`);
-  }
-}
-
-export function getDefaultConfig(): CollabConfig {
-  return JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CollabConfig;
+function sanitizeString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }

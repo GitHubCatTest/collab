@@ -1,5 +1,4 @@
-import type { GenerateResult, ProviderConfig } from "../types/index.js";
-import type { ProviderClient, ProviderInvocation } from "./types.js";
+import type { ProviderClient, ProviderMessage, ProviderRuntimeConfig } from "./types.js";
 import { BaseProvider } from "./base.js";
 
 interface AnthropicResponse {
@@ -9,49 +8,60 @@ interface AnthropicResponse {
   }>;
 }
 
+const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com/v1/messages";
+
 export class AnthropicProvider extends BaseProvider implements ProviderClient {
-  constructor() {
-    super("anthropic");
+  constructor(runtimeConfig?: ProviderRuntimeConfig) {
+    super("anthropic", runtimeConfig);
   }
 
-  isConfigured(config: ProviderConfig): boolean {
-    return Boolean(process.env[config.apiKeyEnv]);
-  }
+  async complete(
+    messages: ProviderMessage[],
+    options?: { maxOutputTokens?: number }
+  ) {
+    const runtime = this.getRuntimeConfig();
+    const model = this.getModel(undefined, runtime.model);
+    const timeoutMs = this.getTimeoutMs(undefined, runtime);
+    const maxOutputTokens = this.getMaxOutputTokens(options?.maxOutputTokens, runtime);
+    const apiKey = this.getApiKey(runtime);
 
-  async generate(invocation: ProviderInvocation): Promise<GenerateResult> {
-    const startMs = Date.now();
-    const key = this.getApiKey(invocation.config);
-    const prompts = this.buildPrompts(invocation.input);
+    const system = messages
+      .filter((message) => message.role === "system")
+      .map((message) => message.content)
+      .join("\n\n");
+    const conversation = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: message.content
+      }));
 
     const response = await this.jsonRequest<AnthropicResponse>({
-      url: invocation.config.baseUrl ?? "https://api.anthropic.com/v1/messages",
-      timeoutMs: invocation.input.timeoutMs,
+      url: this.getBaseUrl(runtime.baseUrl, ANTHROPIC_DEFAULT_BASE_URL),
+      timeoutMs,
       headers: {
-        "x-api-key": key,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01"
       },
       body: {
-        model: invocation.assignment.model,
-        max_tokens: 1600,
-        system: prompts.system,
-        messages: [{ role: "user", content: prompts.user }]
+        model,
+        max_tokens: maxOutputTokens,
+        system,
+        messages: conversation.length > 0 ? conversation : [{ role: "user", content: "" }]
       }
     });
 
-    const text =
+    const content =
       response.content
         ?.filter((item) => item.type === "text" && item.text)
         .map((item) => item.text)
         .join("\n")
-        .trim() ||
-      "SUMMARY:\nNo response body\n\nDIFF_PLAN:\nNone\n\nRISKS:\n- Provider returned empty content\n\nTESTS:\n- Validate provider integration\n\nEVIDENCE:\n- Empty provider response";
+        .trim() || "No response body";
 
-    return this.finalizeResult(
-      this.name,
-      invocation.assignment.model,
-      text,
-      startMs,
-      invocation.input
-    );
+    return this.asCompletion({
+      content,
+      model,
+      promptText: messages.map((message) => message.content).join("\n\n")
+    });
   }
 }

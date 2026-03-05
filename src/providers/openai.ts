@@ -1,5 +1,4 @@
-import type { GenerateResult, ProviderConfig } from "../types/index.js";
-import type { ProviderClient, ProviderInvocation } from "./types.js";
+import type { ProviderClient, ProviderMessage, ProviderRuntimeConfig } from "./types.js";
 import { BaseProvider } from "./base.js";
 
 interface OpenAIResponse {
@@ -12,39 +11,36 @@ interface OpenAIResponse {
   }>;
 }
 
+const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1/responses";
+
 export class OpenAIProvider extends BaseProvider implements ProviderClient {
-  constructor() {
-    super("openai");
+  constructor(runtimeConfig?: ProviderRuntimeConfig) {
+    super("openai", runtimeConfig);
   }
 
-  isConfigured(config: ProviderConfig): boolean {
-    return Boolean(process.env[config.apiKeyEnv]);
-  }
-
-  async generate(invocation: ProviderInvocation): Promise<GenerateResult> {
-    const startMs = Date.now();
-    const key = this.getApiKey(invocation.config);
-    const prompts = this.buildPrompts(invocation.input);
+  async complete(
+    messages: ProviderMessage[],
+    options?: { maxOutputTokens?: number }
+  ) {
+    const runtime = this.getRuntimeConfig();
+    const model = this.getModel(undefined, runtime.model);
+    const timeoutMs = this.getTimeoutMs(undefined, runtime);
+    const maxOutputTokens = this.getMaxOutputTokens(options?.maxOutputTokens, runtime);
+    const apiKey = this.getApiKey(runtime);
 
     const response = await this.jsonRequest<OpenAIResponse>({
-      url: invocation.config.baseUrl ?? "https://api.openai.com/v1/responses",
-      timeoutMs: invocation.input.timeoutMs,
+      url: this.getBaseUrl(runtime.baseUrl, OPENAI_DEFAULT_BASE_URL),
+      timeoutMs,
       headers: {
-        Authorization: `Bearer ${key}`
+        Authorization: `Bearer ${apiKey}`
       },
       body: {
-        model: invocation.assignment.model,
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: prompts.system }]
-          },
-          {
-            role: "user",
-            content: [{ type: "input_text", text: prompts.user }]
-          }
-        ],
-        max_output_tokens: 1600
+        model,
+        input: messages.map((message) => ({
+          role: message.role,
+          content: [{ type: "input_text", text: message.content }]
+        })),
+        max_output_tokens: maxOutputTokens
       }
     });
 
@@ -55,17 +51,12 @@ export class OpenAIProvider extends BaseProvider implements ProviderClient {
       .join("\n")
       .trim();
 
-    const text =
-      response.output_text?.trim() ||
-      nested ||
-      "SUMMARY:\nNo response body\n\nDIFF_PLAN:\nNone\n\nRISKS:\n- Provider returned empty content\n\nTESTS:\n- Validate provider integration\n\nEVIDENCE:\n- Empty provider response";
+    const content = response.output_text?.trim() || nested || "No response body";
 
-    return this.finalizeResult(
-      this.name,
-      invocation.assignment.model,
-      text,
-      startMs,
-      invocation.input
-    );
+    return this.asCompletion({
+      content,
+      model,
+      promptText: messages.map((message) => message.content).join("\n\n")
+    });
   }
 }

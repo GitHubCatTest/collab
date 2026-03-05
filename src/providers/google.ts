@@ -1,5 +1,4 @@
-import type { GenerateResult, ProviderConfig } from "../types/index.js";
-import type { ProviderClient, ProviderInvocation } from "./types.js";
+import type { ProviderClient, ProviderMessage, ProviderRuntimeConfig } from "./types.js";
 import { BaseProvider } from "./base.js";
 
 interface GoogleResponse {
@@ -12,55 +11,71 @@ interface GoogleResponse {
   }>;
 }
 
+const GOOGLE_DEFAULT_BASE_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+
 export class GoogleProvider extends BaseProvider implements ProviderClient {
-  constructor() {
-    super("google");
+  constructor(runtimeConfig?: ProviderRuntimeConfig) {
+    super("google", runtimeConfig);
   }
 
-  isConfigured(config: ProviderConfig): boolean {
-    return Boolean(process.env[config.apiKeyEnv]);
-  }
+  async complete(
+    messages: ProviderMessage[],
+    options?: { maxOutputTokens?: number }
+  ) {
+    const runtime = this.getRuntimeConfig();
+    const model = this.getModel(undefined, runtime.model);
+    const timeoutMs = this.getTimeoutMs(undefined, runtime);
+    const maxOutputTokens = this.getMaxOutputTokens(options?.maxOutputTokens, runtime);
+    const apiKey = this.getApiKey(runtime);
 
-  async generate(invocation: ProviderInvocation): Promise<GenerateResult> {
-    const startMs = Date.now();
-    const key = this.getApiKey(invocation.config);
-    const prompts = this.buildPrompts(invocation.input);
-
-    const baseUrl =
-      invocation.config.baseUrl ??
-      "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
-    const url = baseUrl.replace("{model}", invocation.assignment.model);
+    const systemText = messages
+      .filter((message) => message.role === "system")
+      .map((message) => message.content)
+      .join("\n\n");
+    const contents = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.content }]
+      }));
 
     const response = await this.jsonRequest<GoogleResponse>({
-      url,
-      timeoutMs: invocation.input.timeoutMs,
+      url: resolveGoogleUrl(this.getBaseUrl(runtime.baseUrl, GOOGLE_DEFAULT_BASE_URL), model),
+      timeoutMs,
       headers: {
-        "x-goog-api-key": key
+        "x-goog-api-key": apiKey
       },
       body: {
         systemInstruction: {
-          parts: [{ text: prompts.system }]
+          parts: [{ text: systemText }]
         },
-        contents: [{ role: "user", parts: [{ text: prompts.user }] }],
+        contents: contents.length > 0 ? contents : [{ role: "user", parts: [{ text: "" }] }],
         generationConfig: {
-          temperature: 0.3
+          temperature: 0.3,
+          maxOutputTokens
         }
       }
     });
 
-    const text =
+    const content =
       response.candidates?.[0]?.content?.parts
         ?.map((part) => part.text ?? "")
         .join("\n")
-        .trim() ||
-      "SUMMARY:\nNo response body\n\nDIFF_PLAN:\nNone\n\nRISKS:\n- Provider returned empty content\n\nTESTS:\n- Validate provider integration\n\nEVIDENCE:\n- Empty provider response";
+        .trim() || "No response body";
 
-    return this.finalizeResult(
-      this.name,
-      invocation.assignment.model,
-      text,
-      startMs,
-      invocation.input
-    );
+    return this.asCompletion({
+      content,
+      model,
+      promptText: messages.map((message) => message.content).join("\n\n")
+    });
   }
+}
+
+function resolveGoogleUrl(baseUrl: string, model: string): string {
+  if (!baseUrl.includes("{model}")) {
+    return baseUrl;
+  }
+
+  return baseUrl.replace("{model}", encodeURIComponent(model));
 }

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { redactSensitiveText } from "../safety/redaction.js";
 import type { BusEvent } from "../types/index.js";
 
 export async function replayCommand(pathArg: string | undefined): Promise<number> {
@@ -27,11 +28,11 @@ export async function replayCommand(pathArg: string | undefined): Promise<number
   for (const event of events) {
     if (event.round !== currentRound) {
       currentRound = event.round;
-      console.log(`\n=== Round ${currentRound} ===`);
+    console.log(`\n=== Round ${currentRound} ===`);
     }
 
     console.log(`[${event.ts}] ${event.role}/${event.type}`);
-    console.log(event.content);
+    console.log(redactSensitiveText(event.content));
   }
 
   return 0;
@@ -39,7 +40,14 @@ export async function replayCommand(pathArg: string | undefined): Promise<number
 
 function safeParseEvent(line: string): BusEvent | null {
   try {
-    return JSON.parse(line) as BusEvent;
+    const event = JSON.parse(line) as BusEvent;
+    return {
+      ...event,
+      content: redactSensitiveText(String(event.content ?? "")),
+      refs: Array.isArray(event.refs)
+        ? event.refs.map((ref) => redactSensitiveText(ref))
+        : undefined
+    };
   } catch {
     return null;
   }

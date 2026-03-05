@@ -5,6 +5,7 @@ import type {
   SessionArtifacts,
   VerificationResult
 } from "../types/index.js";
+import { redactSensitiveText, redactUnknown } from "../safety/redaction.js";
 import { ensureDirectory, writeText } from "../utils/fs.js";
 
 interface ArtifactPayload {
@@ -24,14 +25,18 @@ export async function writeArtifacts(
   const logPath = join(baseDir, "session.ndjson");
   const summaryPath = join(baseDir, "summary.json");
 
+  const redactedEvents = redactUnknown(payload.orchestration.events) as OrchestrationResult["events"];
+  const redactedSummary = redactUnknown(payload.orchestration.summary);
+  const redactedPatch = redactSensitiveText(payload.candidatePatch.patch);
+
   await Promise.all([
     writeText(finalPath, renderFinalReport(payload)),
-    writeText(diffPath, payload.candidatePatch.patch),
+    writeText(diffPath, redactedPatch),
     writeText(
       logPath,
-      payload.orchestration.events.map((event) => JSON.stringify(event)).join("\n") + "\n"
+      redactedEvents.map((event) => JSON.stringify(event)).join("\n") + "\n"
     ),
-    writeText(summaryPath, JSON.stringify(payload.orchestration.summary, null, 2) + "\n")
+    writeText(summaryPath, JSON.stringify(redactedSummary, null, 2) + "\n")
   ]);
 
   return {
@@ -43,11 +48,12 @@ export async function writeArtifacts(
 }
 
 function renderFinalReport(payload: ArtifactPayload): string {
-  const winner = payload.orchestration.winningProposal;
-  const summary = payload.orchestration.summary;
+  const redactedPayload = redactUnknown(payload) as ArtifactPayload;
+  const winner = redactedPayload.orchestration.winningProposal;
+  const summary = redactedPayload.orchestration.summary;
   const verificationLines =
-    payload.verification.commandResults.length > 0
-      ? payload.verification.commandResults.map((result) =>
+    redactedPayload.verification.commandResults.length > 0
+      ? redactedPayload.verification.commandResults.map((result) =>
           `- [${result.success ? "PASS" : "FAIL"}] ${result.command} (${result.durationMs}ms)`
         )
       : ["- No verification commands executed"];
@@ -62,8 +68,8 @@ function renderFinalReport(payload: ArtifactPayload): string {
     `- Rounds completed: ${summary.roundsCompleted}`,
     `- Total estimated cost: $${summary.totalCostUsd.toFixed(6)}`,
     `- Winner proposal: ${winner.id}`,
-    `- Patch source: ${payload.candidatePatch.source}`,
-    `- Verification: ${payload.verification.summary}`,
+    `- Patch source: ${redactedPayload.candidatePatch.source}`,
+    `- Verification: ${redactedPayload.verification.summary}`,
     "",
     "## Winner Summary",
     winner.summary,
@@ -78,11 +84,11 @@ function renderFinalReport(payload: ArtifactPayload): string {
     ...(winner.tests.length > 0 ? winner.tests.map((test) => `- ${test}`) : ["- None"]),
     "",
     "## Arbiter Rationale",
-    payload.orchestration.arbiterDecision.rationale,
+    redactedPayload.orchestration.arbiterDecision.rationale,
     "",
     "## Alternatives",
-    ...(payload.orchestration.arbiterDecision.alternatives.length > 0
-      ? payload.orchestration.arbiterDecision.alternatives.map((id) => `- ${id}`)
+    ...(redactedPayload.orchestration.arbiterDecision.alternatives.length > 0
+      ? redactedPayload.orchestration.arbiterDecision.alternatives.map((id) => `- ${id}`)
       : ["- None"]),
     "",
     "## Verification Commands",

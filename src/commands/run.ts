@@ -12,6 +12,7 @@ import {
   buildCandidatePatch,
   validateUnifiedPatch
 } from "../patches/synthesizer.js";
+import { redactSensitiveText } from "../safety/redaction.js";
 import { runVerification } from "../verification/runner.js";
 import type {
   CandidatePatch,
@@ -46,20 +47,44 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
     repoPath,
     options.outDir ?? config.outputDir ?? ".collab/sessions"
   );
-  const runRootDir = join(outputBase, isoTimestampCompact());
+  const runRootDir = join(
+    outputBase,
+    `${isoTimestampCompact()}-${randomUUID().slice(0, 8)}`
+  );
 
   let currentTask = task;
   let finalAttempt: RunAttempt | null = null;
+  const runStartedAtMs = Date.now();
+  let remainingBudgetUsd = config.limits.budgetUsd;
 
   for (let attempt = 0; attempt <= config.execution.maxRevisionLoops; attempt += 1) {
+    const elapsedSec = Math.floor((Date.now() - runStartedAtMs) / 1000);
+    const remainingTimeoutSec = Math.max(0, config.limits.timeoutSec - elapsedSec);
+    if (remainingBudgetUsd <= 0 || remainingTimeoutSec <= 0) {
+      break;
+    }
+
+    const configForAttempt = {
+      ...config,
+      limits: {
+        ...config.limits,
+        budgetUsd: remainingBudgetUsd,
+        timeoutSec: remainingTimeoutSec
+      }
+    };
+
     const attemptDir = join(runRootDir, `attempt-${attempt + 1}`);
 
     const orchestration = await runOrchestration({
       task: currentTask,
       repoPath,
-      config,
+      config: configForAttempt,
       outputDir: attemptDir
     });
+    remainingBudgetUsd = Math.max(
+      0,
+      Number((remainingBudgetUsd - orchestration.summary.totalCostUsd).toFixed(6))
+    );
 
     updateSessionState(orchestration, "planning", "Orchestration completed.");
 
@@ -70,13 +95,29 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
       `Candidate patch built (source=${patch.source}).`
     );
 
-    const verification = await verifyCandidatePatch({
-      repoPath,
-      patch,
-      profile: config.verification.profile,
-      commandsOverride: config.verification.commands,
-      mode: config.execution.mode
-    });
+    let verification: VerificationResult;
+    if (
+      config.execution.mode !== "plan" &&
+      patch.source === "fallback" &&
+      !config.execution.allowFallbackPatch
+    ) {
+      verification = {
+        profile: config.verification.profile,
+        passed: false,
+        commandResults: [],
+        summary:
+          "Fallback patch was generated because no model diff was supplied. Re-run with --allow-fallback-patch to permit this behavior."
+      };
+    } else {
+      updateSessionState(orchestration, "verifying", "Running verification checks.");
+      verification = await verifyCandidatePatch({
+        repoPath,
+        patch,
+        profile: config.verification.profile,
+        commandsOverride: config.verification.commands,
+        mode: config.execution.mode
+      });
+    }
 
     emitVerificationEvent(orchestration, verification.summary);
     updateSessionState(
@@ -85,8 +126,8 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
       verification.summary
     );
 
-    orchestration.summary.mode = config.execution.mode;
-    orchestration.summary.verificationProfile = config.verification.profile;
+    orchestration.summary.mode = configForAttempt.execution.mode;
+    orchestration.summary.verificationProfile = configForAttempt.verification.profile;
     orchestration.summary.verificationPassed = verification.passed;
     orchestration.summary.revisionAttempts = attempt;
     orchestration.summary.patchSource = patch.source;
@@ -120,7 +161,9 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
   }
 
   if (!finalAttempt) {
-    throw new Error("No orchestration attempts were executed.");
+    throw new Error(
+      "No orchestration attempts were executed. Run-level budget/timeout was exhausted before an attempt completed."
+    );
   }
 
   if (config.execution.mode === "apply" && finalAttempt.verification.passed) {
@@ -141,10 +184,21 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
         "applying",
         "Applying patch to repository."
       );
-      const applyResult = await applyPatchSafely({
-        repoPath,
-        patchPath: finalAttempt.artifacts.diffPath
-      });
+      const applyPatchPath = join(
+        finalAttempt.outputDir,
+        `.apply-${randomUUID().slice(0, 8)}.patch`
+      );
+      await writeText(applyPatchPath, finalAttempt.patch.patch);
+      const applyResult = await (async () => {
+        try {
+          return await applyPatchSafely({
+            repoPath,
+            patchPath: applyPatchPath
+          });
+        } finally {
+          await rm(applyPatchPath, { force: true });
+        }
+      })();
 
       if (!applyResult.ok) {
         updateSessionState(
@@ -155,6 +209,11 @@ export async function runCommand(task: string, options: RunCliOptions): Promise<
         finalAttempt.orchestration.summary.verificationPassed = false;
         finalAttempt.orchestration.summary.sessionState = "failed";
       } else {
+        updateSessionState(
+          finalAttempt.orchestration,
+          "verifying",
+          "Running post-apply verification checks."
+        );
         const postApplyVerification = await runVerification({
           repoPath,
           profile: config.verification.profile,
@@ -245,7 +304,7 @@ async function verifyCandidatePatch(args: {
       profile: args.profile,
       passed: false,
       commandResults: [],
-      summary: `Patch is invalid: ${patchValidation.reason}`
+      summary: redactSensitiveText(`Patch is invalid: ${patchValidation.reason}`)
     };
   }
 
@@ -263,9 +322,9 @@ async function verifyCandidatePatch(args: {
         profile: args.profile,
         passed: false,
         commandResults: [],
-        summary: `Patch apply failed in verification workspace: ${
-          apply.stderr || apply.stdout
-        }`
+        summary: redactSensitiveText(
+          `Patch apply failed in verification workspace: ${apply.stderr || apply.stdout}`
+        )
       };
     }
 
@@ -282,23 +341,24 @@ async function verifyCandidatePatch(args: {
 
 function summarizeVerificationFailure(result: VerificationResult): string {
   if (result.commandResults.length === 0) {
-    return result.summary;
+    return redactSensitiveText(result.summary);
   }
 
   const failed = result.commandResults.find((item) => !item.success);
   if (!failed) {
-    return result.summary;
+    return redactSensitiveText(result.summary);
   }
 
   const errorOutput = [failed.stderr.trim(), failed.stdout.trim()]
     .filter(Boolean)
     .join("\n")
-    .slice(0, 800);
+    .slice(0, 500);
+  const redactedOutput = redactSensitiveText(errorOutput);
 
   return [
     `Command: ${failed.command}`,
     `Exit code: ${failed.code}`,
-    `Output:\n${errorOutput || "(no output)"}`
+    `Output:\n${redactedOutput || "(no output)"}`
   ].join("\n\n");
 }
 
@@ -315,7 +375,7 @@ function updateSessionState(
     round: orchestration.summary.roundsCompleted,
     role: "arbiter",
     type: "state_transition",
-    content: `${state}: ${message}`
+    content: redactSensitiveText(`${state}: ${message}`)
   });
 }
 
@@ -330,7 +390,7 @@ function emitVerificationEvent(
     round: orchestration.summary.roundsCompleted,
     role: "arbiter",
     type: "verification",
-    content: summary
+    content: redactSensitiveText(summary)
   });
 }
 
@@ -423,7 +483,7 @@ function printHumanSummary(
   console.log(`Estimated cost: $${summary.totalCostUsd.toFixed(6)}`);
   console.log(`Winner proposal: ${summary.winnerProposalId}`);
   console.log(`Patch source: ${summary.patchSource ?? "unknown"}`);
-  console.log(`Verification: ${attempt.verification.summary}`);
+  console.log(`Verification: ${redactSensitiveText(attempt.verification.summary)}`);
   console.log(`Output root: ${runRootDir}`);
   console.log(`Latest output directory: ${attempt.outputDir}`);
   console.log(`- final report: ${attempt.artifacts.finalPath}`);

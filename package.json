@@ -1,31 +1,36 @@
 {
-  "name": "collab-cli",
-  "version": "0.1.0",
-  "description": "Terminal-native heterogeneous multi-model dev agent",
+  "name": "collab-mcp",
+  "version": "1.0.0",
+  "description": "Multi-model collaborative planning MCP server",
   "type": "module",
   "bin": {
-    "collab": "./dist/index.js"
+    "collab-mcp": "./dist/src/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "node --test --import tsx $(find tests -type f -name '*.test.ts' | sort)",
-    "lint": "tsc -p tsconfig.json --noEmit",
-    "eval:smoke": "tsx src/index.ts eval run --suite smoke --json",
-    "eval:regression": "tsx src/index.ts eval run --suite regression --json"
+    "test": "node --test --import tsx tests/pipeline.*.test.ts tests/providers.base.test.ts tests/subscriptionProvider.test.ts tests/subscriptionCliAdapters.test.ts tests/tools.plan.test.ts tests/tools.compare-review.test.ts tests/mcp.smoke.test.ts",
+    "smoke": "npm run smoke:mcp",
+    "smoke:mcp": "npm run build && tsx scripts/mcp-smoke.ts",
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
-    "cli",
+    "mcp",
     "ai",
     "agents",
-    "orchestration"
+    "planning",
+    "orchestration",
+    "mixture-of-agents"
   ],
   "author": "",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20.0.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.1"
+  },
   "devDependencies": {
     "@types/node": "^22.13.0",
     "tsx": "^4.19.2",

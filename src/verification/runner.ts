@@ -72,7 +72,7 @@ async function resolveVerificationCommands(
   profile: VerificationProfile,
   override?: string[]
 ): Promise<string[]> {
-  if (override && override.length > 0) {
+  if (Array.isArray(override) && override.length > 0) {
     return override;
   }
 

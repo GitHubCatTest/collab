@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { loadConfig } from "../config.js";
 import { AdapterRegistry } from "../adapters/registry.js";
 import { ProviderFactory } from "../providers/factory.js";
-import { redactEnvValue } from "../safety/redaction.js";
+import { redactEnvValue, redactSensitiveText } from "../safety/redaction.js";
 
 export async function doctorCommand(repoPathArg?: string): Promise<number> {
   const repoPath = resolve(repoPathArg ?? process.cwd());
@@ -69,10 +69,10 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
     for (const adapter of adapters) {
       console.log(
         `- ${adapter.name}: command=${adapter.command} status=${
-          adapter.available ? "available" : "not-found"
+          adapter.commandFound ? "command-found" : "command-missing"
         }`
       );
-      if (!adapter.available) {
+      if (!adapter.commandFound) {
         missingAdapters.push(adapter.name);
       }
     }
@@ -82,21 +82,21 @@ export async function doctorCommand(repoPathArg?: string): Promise<number> {
   console.log("Telemetry:");
   console.log(`- enabled: ${config.telemetry.enabled}`);
   if (config.telemetry.endpoint) {
-    console.log(`- endpoint: ${config.telemetry.endpoint}`);
+    console.log(`- endpoint: ${redactSensitiveText(config.telemetry.endpoint)}`);
   }
 
-  printRemediationTips({
+  const hasIssues = printRemediationTips({
     missingProviders,
     missingAdapters
   });
 
-  return 0;
+  return hasIssues ? 1 : 0;
 }
 
 function printRemediationTips(args: {
   missingProviders: Array<{ provider: string; env: string }>;
   missingAdapters: string[];
-}): void {
+}): boolean {
   const hasIssues =
     args.missingProviders.length > 0 || args.missingAdapters.length > 0;
   console.log("");
@@ -104,7 +104,7 @@ function printRemediationTips(args: {
 
   if (!hasIssues) {
     console.log("- Environment looks ready. Try: collab run \"plan the next refactor\" --mode plan");
-    return;
+    return false;
   }
 
   if (args.missingProviders.length > 0) {
@@ -130,4 +130,5 @@ function printRemediationTips(args: {
   }
 
   console.log("- Verify setup after changes: collab doctor");
+  return true;
 }

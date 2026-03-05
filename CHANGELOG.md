@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### v0.2 (In Progress)
+
+#### Added
+
+- Adapter runtime v2 fields: `outputFormat`, `testArgs`, `healthCheckArgs`, `env`.
+- Adapter runtime JSON output parsing with normalization back into section format.
+- Adapter runtime error taxonomy tags: `not-found`, `timeout`, `parse-failed`, `non-zero-exit`.
+- Adapter CLI subcommands: `adapters test`, `adapters doctor`, `adapters init --preset tri-subscription`.
+- Team-mode run controls: `--team auto|manual`, `--debate-rounds`, `--require-evidence`.
+- Round-0 role negotiation with optional auto role remapping (`strengths_first` strategy).
+- Disagreement signal events on close arbiter scores for transparent tie-break context.
+- Quality-gate flow with evidence checks and optional unknown file-ref rejection.
+- Event schema/runtime support for: `role_negotiation`, `disagreement_flag`, `evidence_check`, `adapter_health`, `quality_gate`.
+- New helper scripts: `scripts/adapters/json-adapter-template.mjs`, `scripts/adapters/health-check.mjs`.
+- New tests for orchestration edge cases (auto remapping + quality-gate overrides) and adapter env/payload behavior.
+
+#### Changed
+
+- CLI usage text now documents full adapter subcommand surface.
+- `.collab` example config and adapter protocol docs now cover v0.2 adapter fields and team/quality settings.
+- Parser/unit tests updated for v0.2 run flags and adapter command routing.
+- Adapter payload transport now defaults to stdin with optional legacy env mode.
+- Release workflow now validates tag/version alignment before packaging/publish.
+
 ### Added
 
 - Stateful run pipeline with explicit execution modes: `plan`, `patch`, `apply`.

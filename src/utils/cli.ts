@@ -46,6 +46,20 @@ export function parseRunArgs(args: string[]): ParsedRunArgs {
       continue;
     }
 
+    if (arg === "--team") {
+      const value = readOptionValue(args, ++i, arg);
+      if (value !== "auto" && value !== "manual") {
+        throw new Error(`Invalid --team value: ${value}`);
+      }
+      options.teamMode = value;
+      continue;
+    }
+
+    if (arg === "--debate-rounds") {
+      options.debateRounds = parsePositiveNumber(readOptionValue(args, ++i, arg), arg);
+      continue;
+    }
+
     if (arg === "--verify") {
       const value = readOptionValue(args, ++i, arg);
       if (value !== "none" && value !== "basic" && value !== "strict") {
@@ -63,6 +77,16 @@ export function parseRunArgs(args: string[]): ParsedRunArgs {
 
     if (arg === "--yes") {
       options.autoYes = true;
+      continue;
+    }
+
+    if (arg === "--require-evidence") {
+      options.requireEvidence = true;
+      continue;
+    }
+
+    if (arg === "--allow-fallback-patch") {
+      options.allowFallbackPatch = true;
       continue;
     }
 
@@ -120,6 +144,9 @@ Usage:
   collab chat [options]
   collab doctor
   collab adapters list
+  collab adapters test <name>
+  collab adapters doctor
+  collab adapters init --preset tri-subscription
   collab replay <session.ndjson>
   collab eval run --suite smoke|regression [--repo <path>] [--json]
 
@@ -129,7 +156,12 @@ Run options:
   --budget-usd <n>      Session budget in USD (default from config)
   --timeout-sec <n>     Session timeout in seconds (default from config)
   --mode <mode>         Execution mode: plan|patch|apply
+  --team <mode>         Team control mode: auto|manual
+  --debate-rounds <n>   Team debate rounds (<= --max-rounds)
   --verify <profile>    Verification profile: none|basic|strict
+  --require-evidence    Require winning proposal evidence entries
+  --allow-fallback-patch
+                        Allow generated fallback patch when no model diff is supplied
   --max-revisions <n>   Auto-revision attempts when verification fails
   --yes                 Skip apply confirmation prompt
   --out <dir>           Output base directory
